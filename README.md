@@ -22,10 +22,11 @@ Rscript CCMM_2026_wp--tables.R
 Rscript CCMM_2026_wp--figures.R
 ```
 
-The homogeneous-AOM simulation engine is implemented. It reproduces the seven
-menu-support designs, three menu-specific sample sizes, and four preference
-hypotheses reported in the supplemental appendix. The H-LAO and diagnostic
-blocks currently remain design-only.
+The homogeneous-AOM simulation engine reproduces the seven menu-support
+designs, three menu-specific sample sizes, and four preference hypotheses
+reported in the supplemental appendix. The H-LAO engine implements the ten
+planned heterogeneous-preference configurations at four sample sizes. The
+separate diagnostic block remains design-only.
 
 To inspect the complete planned Monte Carlo design without running simulations,
 use:
@@ -40,6 +41,18 @@ use:
 ```text
 Rscript CCMM_2026_wp--simuls.R --pilot --block=homogeneous-aom
 ```
+
+To run the 25-replication H-LAO pilot, use:
+
+```text
+Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao
+```
+
+H-LAO output records plug-in reach and full-attention estimates, weak-reach
+pairwise intervals, dependence-robust event intervals, population identified
+bounds, compatibility diagnostics, and runtime. General-event LPs are used for
+the four-alternative designs; the six-alternative sparse designs use the
+ranking-free pairwise procedure.
 
 For a quick smoke run, the replication and critical-draw counts can be
 overridden explicitly:

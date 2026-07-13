@@ -315,15 +315,506 @@ run_aom_simulations <- function(design, n_rep, n_crit, seed) {
   do.call(rbind, result[seq_len(result_index)])
 }
 
+hlao_menu_key <- function(items) {
+  paste(items, collapse = "-")
+}
+
+hlao_suffix_close <- function(menus) {
+  result <- menus
+  for (items in menus) {
+    for (position in seq_along(items)) {
+      suffix <- items[position:length(items)]
+      result[[hlao_menu_key(suffix)]] <- suffix
+    }
+  }
+  code <- vapply(result, function(items) sum(2^(items - 1L)), numeric(1L))
+  result[order(code)]
+}
+
+hlao_menu_support <- function(universe_size, support) {
+  if (support == "full") {
+    menus <- list()
+    for (size in seq_len(universe_size)) {
+      combinations <- utils::combn(universe_size, size)
+      for (index in seq_len(ncol(combinations))) {
+        items <- combinations[, index]
+        menus[[hlao_menu_key(items)]] <- items
+      }
+    }
+    return(hlao_suffix_close(menus))
+  }
+  if (support == "prefix-rich") {
+    if (universe_size != 4L) {
+      stop("The prefix-rich design is calibrated for four alternatives.", call. = FALSE)
+    }
+    menus <- list(
+      c(1L), c(2L), c(3L), c(4L), c(1L, 2L), c(1L, 3L),
+      c(2L, 4L), c(1L, 2L, 4L), c(1L, 3L, 4L)
+    )
+    names(menus) <- vapply(menus, hlao_menu_key, character(1L))
+    return(hlao_suffix_close(menus))
+  }
+  if (support == "sparse-pairwise") {
+    menus <- lapply(seq_len(universe_size), function(item) item)
+    pairs <- utils::combn(universe_size, 2L, simplify = FALSE)
+    menus <- c(menus, pairs)
+    names(menus) <- vapply(menus, hlao_menu_key, character(1L))
+    return(hlao_suffix_close(menus))
+  }
+  stop("Unknown H-LAO menu support: ", support, call. = FALSE)
+}
+
+hlao_preference_distribution <- function(universe_size, design) {
+  rankings <- ramchoice::hlaoRankings(seq_len(universe_size))
+  diffuse_weights <- ((seq_len(nrow(rankings)) * 37L) %% 101L) + 1L
+  diffuse <- diffuse_weights / sum(diffuse_weights)
+  if (design == "diffuse") {
+    tau <- diffuse
+  } else if (design == "concentrated") {
+    tau <- 0.25 * diffuse
+    baseline <- which(apply(rankings, 1L, function(ranking) {
+      identical(as.integer(ranking), seq_len(universe_size))
+    }))
+    tau[baseline] <- tau[baseline] + 0.75
+  } else {
+    stop("Unknown H-LAO preference design: ", design, call. = FALSE)
+  }
+  list(rankings = rankings, tau = tau / sum(tau))
+}
+
+hlao_continuation <- function(items, stopping_design, reach_design,
+                              universe_size) {
+  remaining <- length(items) - seq_along(items)
+  if (stopping_design == "geometric") {
+    probability <- if (reach_design == "high") 0.90 else 0.50
+    return(rep(probability, length(items)))
+  }
+  if (stopping_design == "rank-dependent") {
+    if (reach_design == "high") {
+      return(pmax(0.65, 0.95 - 0.06 * remaining))
+    }
+    if (reach_design == "low") {
+      return(pmax(0.12, 0.65 - 0.13 * remaining))
+    }
+    if (reach_design == "zero") {
+      return(ifelse(remaining >= 1L, 0, 0.80))
+    }
+  }
+  if (stopping_design == "alternative-dependent") {
+    probabilities <- if (reach_design == "high") {
+      seq(0.94, 0.76, length.out = universe_size)
+    } else {
+      seq(0.68, 0.28, length.out = universe_size)
+    }
+    return(probabilities[items])
+  }
+  stop(
+    "Unsupported H-LAO stopping/reach combination: ",
+    stopping_design, "/", reach_design,
+    call. = FALSE
+  )
+}
+
+hlao_prefix_masses <- function(continuation) {
+  reach <- cumprod(continuation)
+  masses <- c(
+    1 - reach[1L],
+    if (length(reach) > 1L) {
+      reach[-length(reach)] - reach[-1L]
+    } else {
+      numeric(0L)
+    },
+    reach[length(reach)]
+  )
+  list(reach = reach, masses = masses)
+}
+
+hlao_couple_margins <- function(row_margins, column_margins, row_order) {
+  rows <- row_margins[row_order]
+  columns <- column_margins
+  coupling <- matrix(0, nrow = length(rows), ncol = length(columns))
+  row_index <- column_index <- 1L
+  tolerance <- 1e-14
+  while (row_index <= length(rows) && column_index <= length(columns)) {
+    amount <- min(rows[row_index], columns[column_index])
+    coupling[row_index, column_index] <-
+      coupling[row_index, column_index] + amount
+    rows[row_index] <- rows[row_index] - amount
+    columns[column_index] <- columns[column_index] - amount
+    if (rows[row_index] <= tolerance) row_index <- row_index + 1L
+    if (columns[column_index] <= tolerance) column_index <- column_index + 1L
+  }
+  result <- matrix(0, nrow = length(row_margins), ncol = length(column_margins))
+  result[row_order, ] <- coupling
+  result
+}
+
+hlao_best_in_prefix <- function(rankings, prefix) {
+  apply(rankings, 1L, function(ranking) ranking[match(TRUE, ranking %in% prefix)])
+}
+
+build_hlao_population <- function(design_row) {
+  universe_size <- as.integer(design_row$universe_size)
+  menus <- hlao_menu_support(universe_size, design_row$menu_support)
+  preferences <- hlao_preference_distribution(
+    universe_size,
+    design_row$preference_design
+  )
+  rankings <- preferences$rankings
+  tau <- preferences$tau
+  menu <- prob <- matrix(0, nrow = length(menus), ncol = universe_size)
+  outside_prob <- numeric(length(menus))
+  reach <- masses <- vector("list", length(menus))
+
+  for (menu_index in seq_along(menus)) {
+    items <- menus[[menu_index]]
+    menu[menu_index, items] <- 1
+    attention <- hlao_prefix_masses(hlao_continuation(
+      items,
+      design_row$stopping_design,
+      design_row$reach_design,
+      universe_size
+    ))
+    reach[[menu_index]] <- attention$reach
+    masses[[menu_index]] <- attention$masses
+    outside_prob[menu_index] <- attention$masses[1L]
+
+    if (design_row$dependence_design == "independent") {
+      coupling <- outer(tau, attention$masses)
+    } else {
+      last_item <- items[length(items)]
+      preference_position <- apply(rankings, 1L, function(ranking) {
+        match(last_item, ranking)
+      })
+      coupling <- hlao_couple_margins(
+        tau,
+        attention$masses,
+        order(-preference_position)
+      )
+    }
+    for (prefix_size in seq_along(items)) {
+      winners <- hlao_best_in_prefix(
+        rankings,
+        items[seq_len(prefix_size)]
+      )
+      for (alternative in items) {
+        selected <- winners == alternative
+        prob[menu_index, alternative] <- prob[menu_index, alternative] +
+          sum(coupling[selected, prefix_size + 1L])
+      }
+    }
+  }
+
+  event <- apply(rankings, 1L, function(ranking) {
+    match(universe_size, ranking) < match(1L, ranking)
+  })
+  list(
+    menu = menu,
+    prob = prob,
+    outside_prob = outside_prob,
+    menus = menus,
+    reach = reach,
+    masses = masses,
+    rankings = rankings,
+    tau = tau,
+    event = event,
+    event_name = paste0(universe_size, " above 1"),
+    event_truth = sum(tau[event])
+  )
+}
+
+simulate_hlao_sample <- function(population, n_per_menu) {
+  universe_size <- ncol(population$menu)
+  menu <- choice <- matrix(
+    0,
+    nrow = nrow(population$menu) * n_per_menu,
+    ncol = universe_size
+  )
+  for (menu_index in seq_len(nrow(population$menu))) {
+    rows <- (menu_index - 1L) * n_per_menu + seq_len(n_per_menu)
+    menu[rows, ] <- population$menu[rep(menu_index, n_per_menu), , drop = FALSE]
+    probabilities <- c(
+      population$outside_prob[menu_index],
+      population$prob[menu_index, ]
+    )
+    draws <- max.col(
+      t(stats::rmultinom(n_per_menu, 1L, probabilities)),
+      ties.method = "first"
+    )
+    inside <- which(draws > 1L)
+    if (length(inside)) {
+      choice[cbind(rows[inside], draws[inside] - 1L)] <- 1
+    }
+  }
+  list(menu = menu, choice = choice)
+}
+
+hlao_pairwise_truth <- function(rankings, tau, earlier, later) {
+  selected <- apply(rankings, 1L, function(ranking) {
+    match(later, ranking) < match(earlier, ranking)
+  })
+  sum(tau[selected])
+}
+
+hlao_result_row <- function(design_row, replication, replication_seed,
+                            estimand_type, estimand_id, truth = NA_real_,
+                            estimate = NA_real_, lower = NA_real_,
+                            upper = NA_real_, identified = NA,
+                            target_valid = TRUE, population_lower = NA_real_,
+                            population_upper = NA_real_, method = NA_character_,
+                            alpha = NA_real_, menu_id = NA_integer_,
+                            alternative = NA_integer_, earlier = NA_integer_,
+                            later = NA_integer_, elapsed_seconds = NA_real_,
+                            population_independent_compatible = NA,
+                            population_robust_compatible = NA) {
+  covered <- if (target_valid && is.finite(truth) && is.finite(lower) &&
+                 is.finite(upper)) {
+    lower <= truth && truth <= upper
+  } else {
+    NA
+  }
+  data.frame(
+    design_id = design_row$design_id,
+    block = design_row$block,
+    replication = replication,
+    replication_seed = replication_seed,
+    universe_size = design_row$universe_size,
+    n_per_menu = design_row$n_per_menu,
+    menu_support = design_row$menu_support,
+    preference_design = design_row$preference_design,
+    stopping_design = design_row$stopping_design,
+    reach_design = design_row$reach_design,
+    dependence_design = design_row$dependence_design,
+    estimand_type = estimand_type,
+    estimand_id = estimand_id,
+    menu_id = menu_id,
+    alternative = alternative,
+    earlier = earlier,
+    later = later,
+    truth = truth,
+    estimate = estimate,
+    error = if (is.finite(truth) && is.finite(estimate)) estimate - truth else NA_real_,
+    squared_error = if (is.finite(truth) && is.finite(estimate)) {
+      (estimate - truth)^2
+    } else {
+      NA_real_
+    },
+    lower = lower,
+    upper = upper,
+    covered = covered,
+    width = if (is.finite(lower) && is.finite(upper)) upper - lower else NA_real_,
+    identified = identified,
+    target_valid = target_valid,
+    population_lower = population_lower,
+    population_upper = population_upper,
+    population_independent_compatible = population_independent_compatible,
+    population_robust_compatible = population_robust_compatible,
+    method = method,
+    alpha = alpha,
+    elapsed_seconds = elapsed_seconds,
+    stringsAsFactors = FALSE
+  )
+}
+
+run_hlao_simulations <- function(design, n_rep, seed) {
+  result <- list()
+  result_index <- 0L
+  population_cache <- list()
+
+  for (design_index in seq_len(nrow(design))) {
+    row <- design[design_index, ]
+    config_id <- sub("-N[0-9]+$", "", row$design_id)
+    if (is.null(population_cache[[config_id]])) {
+      population <- build_hlao_population(row)
+      event_argument <- if (row$universe_size == 4L) {
+        setNames(list(population$event), population$event_name)
+      } else {
+        NULL
+      }
+      population$analysis <- ramchoice::hlaoModel(
+        population$menu,
+        population$prob,
+        outside_prob = population$outside_prob,
+        events = event_argument,
+        dependence = if (row$universe_size == 4L) "both" else "independent"
+      )
+      population_cache[[config_id]] <- population
+    }
+    population <- population_cache[[config_id]]
+    compatibility <- population$analysis$compatibility
+    independent_compatible <- compatibility$compatible[
+      match("independent", compatibility$mode)
+    ]
+    robust_compatible <- compatibility$compatible[
+      match("robust", compatibility$mode)
+    ]
+    if (!length(robust_compatible)) robust_compatible <- NA
+    robust_bounds <- population$analysis$bounds[
+      population$analysis$bounds$mode == "robust", , drop = FALSE
+    ]
+
+    for (replication in seq_len(n_rep)) {
+      seed_replication <- replication_seed(
+        seed,
+        1000L + design_index,
+        replication
+      )
+      set.seed(seed_replication)
+      sample <- simulate_hlao_sample(population, row$n_per_menu)
+      event_argument <- if (row$universe_size == 4L) {
+        setNames(list(population$event), population$event_name)
+      } else {
+        NULL
+      }
+      fit <- ramchoice::hlaoTest(
+        sample$menu,
+        sample$choice,
+        events = event_argument,
+        alpha = 0.05
+      )
+
+      for (attention_index in seq_len(nrow(fit$attention))) {
+        estimate_row <- fit$attention[attention_index, ]
+        truth_row <- population$analysis$attention[
+          population$analysis$attention$menu_id == estimate_row$menu_id &
+            population$analysis$attention$alternative == estimate_row$alternative,
+          ,
+          drop = FALSE
+        ]
+        result_index <- result_index + 1L
+        result[[result_index]] <- hlao_result_row(
+          row, replication, seed_replication,
+          estimand_type = "reach",
+          estimand_id = paste0("reach-M", estimate_row$menu_id,
+                               "-A", estimate_row$alternative),
+          truth = truth_row$reach,
+          estimate = estimate_row$reach,
+          identified = TRUE,
+          menu_id = estimate_row$menu_id,
+          alternative = estimate_row$alternative,
+          method = "plug-in",
+          elapsed_seconds = fit$elapsed,
+          population_independent_compatible = independent_compatible,
+          population_robust_compatible = robust_compatible
+        )
+      }
+
+      if (!is.null(fit$full_attention) &&
+          !is.null(population$analysis$full_attention)) {
+        for (menu_index in seq_len(nrow(population$menu))) {
+          for (alternative in which(population$menu[menu_index, ] == 1L)) {
+            result_index <- result_index + 1L
+            result[[result_index]] <- hlao_result_row(
+              row, replication, seed_replication,
+              estimand_type = "full-attention",
+              estimand_id = paste0("f-M", menu_index, "-A", alternative),
+              truth = population$analysis$full_attention$matrix[
+                menu_index, alternative
+              ],
+              estimate = fit$full_attention$matrix[menu_index, alternative],
+              identified = TRUE,
+              menu_id = menu_index,
+              alternative = alternative,
+              method = "recursive-plug-in",
+              elapsed_seconds = fit$elapsed,
+              population_independent_compatible = independent_compatible,
+              population_robust_compatible = robust_compatible
+            )
+          }
+        }
+      }
+
+      for (pair_index in seq_len(nrow(fit$pairwise))) {
+        pair <- fit$pairwise[pair_index, ]
+        truth <- hlao_pairwise_truth(
+          population$rankings,
+          population$tau,
+          pair$earlier,
+          pair$later
+        )
+        population_pair <- population$analysis$pairwise[
+          population$analysis$pairwise$earlier == pair$earlier &
+            population$analysis$pairwise$later == pair$later,
+          ,
+          drop = FALSE
+        ]
+        target_valid <- row$dependence_design == "independent"
+        result_index <- result_index + 1L
+        result[[result_index]] <- hlao_result_row(
+          row, replication, seed_replication,
+          estimand_type = "pairwise-share",
+          estimand_id = paste0(pair$later, "-above-", pair$earlier),
+          truth = truth,
+          estimate = pair$estimate,
+          lower = pair$lower,
+          upper = pair$upper,
+          identified = population_pair$identified,
+          target_valid = target_valid,
+          earlier = pair$earlier,
+          later = pair$later,
+          method = pair$method,
+          alpha = pair$alpha,
+          elapsed_seconds = fit$elapsed,
+          population_independent_compatible = independent_compatible,
+          population_robust_compatible = robust_compatible
+        )
+      }
+
+      if (nrow(fit$event_intervals)) {
+        interval <- fit$event_intervals[1L, ]
+        result_index <- result_index + 1L
+        result[[result_index]] <- hlao_result_row(
+          row, replication, seed_replication,
+          estimand_type = "preference-event",
+          estimand_id = population$event_name,
+          truth = population$event_truth,
+          lower = interval$lower,
+          upper = interval$upper,
+          identified = if (nrow(robust_bounds)) {
+            abs(robust_bounds$upper - robust_bounds$lower) < 1e-10
+          } else {
+            NA
+          },
+          target_valid = TRUE,
+          population_lower = if (nrow(robust_bounds)) robust_bounds$lower else NA_real_,
+          population_upper = if (nrow(robust_bounds)) robust_bounds$upper else NA_real_,
+          method = interval$method,
+          alpha = interval$alpha,
+          elapsed_seconds = fit$elapsed,
+          population_independent_compatible = independent_compatible,
+          population_robust_compatible = robust_compatible
+        )
+      }
+    }
+
+    message(
+      "Completed ", row$design_id, " (", design_index, "/", nrow(design), ")"
+    )
+  }
+  do.call(rbind, result[seq_len(result_index)])
+}
+
 run_simulations <- function(design, block, n_rep, n_crit, seed) {
-  if (block != "homogeneous-aom") {
+  if (block == "homogeneous-aom") {
+    selected <- design[design$block == block, , drop = FALSE]
+    return(run_aom_simulations(
+      selected,
+      n_rep = n_rep,
+      n_crit = n_crit,
+      seed = seed
+    ))
+  }
+  if (block == "hlao") {
+    selected <- design[design$block == block, , drop = FALSE]
+    return(run_hlao_simulations(selected, n_rep = n_rep, seed = seed))
+  }
+  if (block %in% c("hlao-diagnostic", "all")) {
     stop(
-      "Only the homogeneous-aom engine is implemented. The H-LAO blocks remain design-only.",
+      "The hlao-diagnostic block is not implemented yet; run a specific completed block.",
       call. = FALSE
     )
   }
-  selected <- design[design$block == block, , drop = FALSE]
-  run_aom_simulations(selected, n_rep = n_rep, n_crit = n_crit, seed = seed)
+  stop("Unknown simulation block: ", block, call. = FALSE)
 }
 
 main <- function() {
