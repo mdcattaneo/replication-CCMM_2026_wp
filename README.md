@@ -26,7 +26,8 @@ The homogeneous-AOM simulation engine reproduces the seven menu-support
 designs, three menu-specific sample sizes, and four preference hypotheses
 reported in the supplemental appendix. The H-LAO engine implements the ten
 planned heterogeneous-preference configurations at four sample sizes. The
-separate diagnostic block remains design-only.
+separate diagnostic block implements calibrated null, local, and fixed
+alternatives for attention-overload and Block--Marschak restrictions.
 
 To inspect the complete planned Monte Carlo design without running simulations,
 use:
@@ -48,6 +49,12 @@ To run the 25-replication H-LAO pilot, use:
 Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao
 ```
 
+To run the 25-replication H-LAO specification-diagnostic pilot, use:
+
+```text
+Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao-diagnostic
+```
+
 H-LAO output records plug-in reach and full-attention estimates, weak-reach
 pairwise intervals, dependence-robust event intervals, population identified
 bounds, compatibility diagnostics, and runtime. Every sample is analyzed with
@@ -55,6 +62,14 @@ both finite-sample Hoeffding bands and covariance-aware correlated-Gaussian
 bands; `--critical-draws` controls the Gaussian simulation. General-event LPs
 are used for the four-alternative designs; the six-alternative sparse designs
 use the ranking-free pairwise procedure.
+
+The diagnostic block studies simultaneous attention-overload and
+Block--Marschak specification checks under a valid null and local or fixed
+violations. It compares finite-sample Hoeffding outer diagnostics,
+covariance-aware Gaussian/exact outer diagnostics, and direct delta-Gaussian
+diagnostics. The direct method is used in this regular complete-menu,
+positive-reach design; the outer methods remain available when regularity is
+weak.
 
 For a quick smoke run, the replication and critical-draw counts can be
 overridden explicitly:

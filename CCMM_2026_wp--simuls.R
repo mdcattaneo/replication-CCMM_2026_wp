@@ -64,6 +64,7 @@ build_aom_design <- function() {
   design$reach_design <- "not-applicable"
   design$dependence_design <- "not-applicable"
   design$violation_design <- "published-baseline"
+  design$violation_severity <- "not-applicable"
   design$design_id <- sprintf("AOM-%s-N%03d", design$support_id, design$n_per_menu)
   design$support_id <- NULL
   rownames(design) <- NULL
@@ -95,7 +96,8 @@ build_hlao_design <- function() {
       rep("independent", 6), "dependent", "independent", "independent",
       "independent"
     ),
-    violation_design = "none"
+    violation_design = "none",
+    violation_severity = "not-applicable"
   )
   design <- merge(
     configurations,
@@ -109,23 +111,33 @@ build_hlao_design <- function() {
 }
 
 build_diagnostic_design <- function() {
-  design <- expand.grid(
-    violation_design = c("recovered-list-attention", "block-marschak"),
-    n_per_menu = c(100L, 200L),
+  configurations <- data.frame(
+    diagnostic_id = c("NULL", "RLA-L", "RLA-F", "BM-L", "BM-F"),
+    violation_design = c(
+      "none", "recovered-list-attention", "recovered-list-attention",
+      "block-marschak", "block-marschak"
+    ),
+    violation_severity = c("null", "local", "fixed", "local", "fixed"),
     stringsAsFactors = FALSE
+  )
+  design <- merge(
+    configurations,
+    data.frame(n_per_menu = c(100L, 200L, 500L)),
+    all = TRUE
   )
   design$block <- "hlao-diagnostic"
   design$universe_size <- 4L
-  design$preference_design <- "diffuse"
+  design$preference_design <- "bm-boundary"
   design$stopping_design <- "geometric"
   design$reach_design <- "high"
-  design$menu_support <- "prefix-rich"
+  design$menu_support <- "full"
   design$dependence_design <- "independent"
   design$design_id <- sprintf(
     "DIAG-%s-N%03d",
-    ifelse(design$violation_design == "recovered-list-attention", "RLA", "BM"),
+    design$diagnostic_id,
     design$n_per_menu
   )
+  design$diagnostic_id <- NULL
   design
 }
 
@@ -133,7 +145,7 @@ build_design <- function() {
   columns <- c(
     "design_id", "block", "universe_size", "n_per_menu",
     "preference_design", "stopping_design", "reach_design", "menu_support",
-    "dependence_design", "violation_design"
+    "dependence_design", "violation_design", "violation_severity"
   )
   design <- rbind(
     build_aom_design()[columns],
@@ -364,6 +376,17 @@ hlao_menu_support <- function(universe_size, support) {
   stop("Unknown H-LAO menu support: ", support, call. = FALSE)
 }
 
+hlao_bm_boundary_event <- function(rankings) {
+  if (ncol(rankings) != 4L) {
+    stop("The BM-boundary preference design requires four alternatives.", call. = FALSE)
+  }
+  apply(rankings, 1L, function(ranking) {
+    position <- match(seq_len(4L), ranking)
+    max(position[c(1L, 4L)]) < position[2L] &&
+      position[2L] < position[3L]
+  })
+}
+
 hlao_preference_distribution <- function(universe_size, design) {
   rankings <- ramchoice::hlaoRankings(seq_len(universe_size))
   diffuse_weights <- ((seq_len(nrow(rankings)) * 37L) %% 101L) + 1L
@@ -376,6 +399,33 @@ hlao_preference_distribution <- function(universe_size, design) {
       identical(as.integer(ranking), seq_len(universe_size))
     }))
     tau[baseline] <- tau[baseline] + 0.75
+  } else if (design == "degenerate") {
+    tau <- numeric(nrow(rankings))
+    baseline <- which(apply(rankings, 1L, function(ranking) {
+      identical(as.integer(ranking), seq_len(universe_size))
+    }))
+    tau[baseline] <- 1
+  } else if (design == "cyclic") {
+    if (universe_size != 4L) {
+      stop("The cyclic preference design requires four alternatives.", call. = FALSE)
+    }
+    support <- rbind(
+      c(1L, 2L, 3L, 4L),
+      c(2L, 3L, 4L, 1L),
+      c(3L, 4L, 1L, 2L),
+      c(4L, 1L, 2L, 3L)
+    )
+    tau <- numeric(nrow(rankings))
+    for (ranking in seq_len(nrow(support))) {
+      selected <- which(apply(rankings, 1L, function(candidate) {
+        identical(as.integer(candidate), support[ranking, ])
+      }))
+      tau[selected] <- 1 / nrow(support)
+    }
+  } else if (design == "bm-boundary") {
+    excluded <- hlao_bm_boundary_event(rankings)
+    tau <- as.numeric(!excluded)
+    tau <- tau / sum(tau)
   } else {
     stop("Unknown H-LAO preference design: ", design, call. = FALSE)
   }
@@ -386,7 +436,13 @@ hlao_continuation <- function(items, stopping_design, reach_design,
                               universe_size) {
   remaining <- length(items) - seq_along(items)
   if (stopping_design == "geometric") {
-    probability <- if (reach_design == "high") 0.90 else 0.50
+    probability <- switch(
+      reach_design,
+      high = 0.90,
+      moderate = 0.75,
+      low = 0.50,
+      stop("Unknown geometric reach design: ", reach_design, call. = FALSE)
+    )
     return(rep(probability, length(items)))
   }
   if (stopping_design == "rank-dependent") {
@@ -521,6 +577,112 @@ build_hlao_population <- function(design_row) {
     event_name = paste0(universe_size, " above 1"),
     event_truth = sum(tau[event])
   )
+}
+
+hlao_full_rule <- function(population) {
+  full <- matrix(
+    0,
+    nrow = nrow(population$menu),
+    ncol = ncol(population$menu)
+  )
+  for (menu_index in seq_along(population$menus)) {
+    items <- population$menus[[menu_index]]
+    winners <- hlao_best_in_prefix(population$rankings, items)
+    for (alternative in items) {
+      full[menu_index, alternative] <- sum(
+        population$tau[winners == alternative]
+      )
+    }
+  }
+  full
+}
+
+hlao_prob_from_full <- function(population, full) {
+  prob <- matrix(
+    0,
+    nrow = nrow(population$menu),
+    ncol = ncol(population$menu)
+  )
+  keys <- vapply(population$menus, hlao_menu_key, character(1L))
+  for (menu_index in seq_along(population$menus)) {
+    items <- population$menus[[menu_index]]
+    for (prefix_size in seq_along(items)) {
+      prefix_index <- match(
+        hlao_menu_key(items[seq_len(prefix_size)]),
+        keys
+      )
+      prob[menu_index, ] <- prob[menu_index, ] +
+        population$masses[[menu_index]][prefix_size + 1L] *
+        full[prefix_index, ]
+    }
+  }
+  prob
+}
+
+hlao_diagnostic_magnitude <- function(design_row) {
+  if (design_row$violation_severity == "null") {
+    return(0)
+  }
+  if (design_row$violation_severity == "local") {
+    coefficient <- if (design_row$violation_design == "block-marschak") 3 else 0.75
+    return(coefficient / sqrt(design_row$n_per_menu))
+  }
+  if (design_row$violation_severity == "fixed") {
+    return(if (design_row$violation_design == "block-marschak") 0.30 else 0.08)
+  }
+  stop(
+    "Unknown diagnostic violation severity: ",
+    design_row$violation_severity,
+    call. = FALSE
+  )
+}
+
+build_hlao_diagnostic_population <- function(design_row) {
+  population <- build_hlao_population(design_row)
+  magnitude <- hlao_diagnostic_magnitude(design_row)
+  keys <- vapply(population$menus, hlao_menu_key, character(1L))
+
+  if (design_row$violation_design == "recovered-list-attention") {
+    target <- match("1-2", keys)
+    population$outside_prob[target] <-
+      population$outside_prob[target] - magnitude
+    conditional_inside <- population$prob[target, ] /
+      sum(population$prob[target, ])
+    population$prob[target, ] <-
+      (1 - population$outside_prob[target]) * conditional_inside
+  } else if (design_row$violation_design == "block-marschak") {
+    excluded <- hlao_bm_boundary_event(population$rankings)
+    signed_tau <- population$tau
+    signed_tau[excluded] <- -magnitude / sum(excluded)
+    signed_tau[!excluded] <- signed_tau[!excluded] +
+      magnitude / sum(!excluded)
+    signed_population <- population
+    signed_population$tau <- signed_tau
+    full <- hlao_full_rule(signed_population)
+    population$prob <- hlao_prob_from_full(population, full)
+  } else if (design_row$violation_design != "none") {
+    stop(
+      "Unknown H-LAO diagnostic violation: ",
+      design_row$violation_design,
+      call. = FALSE
+    )
+  }
+
+  population$analysis <- ramchoice::hlaoModel(
+    population$menu,
+    population$prob,
+    outside_prob = population$outside_prob,
+    dependence = "both"
+  )
+  population$violation_magnitude <- magnitude
+  population$attention_violation <-
+    population$analysis$attention_diagnostics$max_attention_overload_violation
+  population$bm_violation <- if (is.null(population$analysis$block_marschak)) {
+    NA_real_
+  } else {
+    max(0, -population$analysis$block_marschak$minimum)
+  }
+  population
 }
 
 simulate_hlao_sample <- function(population, n_per_menu) {
@@ -812,6 +974,127 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
   do.call(rbind, result[seq_len(result_index)])
 }
 
+run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
+  result <- list()
+  result_index <- 0L
+
+  for (design_index in seq_len(nrow(design))) {
+    row <- design[design_index, ]
+    population <- build_hlao_diagnostic_population(row)
+    compatibility <- population$analysis$compatibility
+    independent_compatible <- compatibility$compatible[
+      match("independent", compatibility$mode)
+    ]
+    robust_compatible <- compatibility$compatible[
+      match("robust", compatibility$mode)
+    ]
+
+    for (replication in seq_len(n_rep)) {
+      seed_replication <- replication_seed(
+        seed,
+        3000L + design_index,
+        replication
+      )
+      set.seed(seed_replication)
+      sample <- simulate_hlao_sample(population, row$n_per_menu)
+      fit_hoeffding <- ramchoice::hlaoTest(
+        sample$menu,
+        sample$choice,
+        alpha = 0.05,
+        band_method = "hoeffding"
+      )
+      set.seed(replication_seed(
+        seed,
+        4000L + design_index,
+        replication
+      ))
+      fit_gaussian <- ramchoice::hlaoTest(
+        sample$menu,
+        sample$choice,
+        alpha = 0.05,
+        band_method = "gaussian",
+        n_band_draws = n_crit
+      )
+      set.seed(replication_seed(
+        seed,
+        5000L + design_index,
+        replication
+      ))
+      fit_delta <- ramchoice::hlaoTest(
+        sample$menu,
+        sample$choice,
+        alpha = 0.05,
+        band_method = "gaussian",
+        diagnostic_method = "delta",
+        n_band_draws = n_crit
+      )
+
+      for (fit in list(fit_hoeffding, fit_gaussian, fit_delta)) {
+        for (diagnostic_index in seq_len(nrow(fit$specification))) {
+          diagnostic <- fit$specification[diagnostic_index, ]
+          population_violation <- switch(
+            diagnostic$restriction,
+            `attention-overload` = population$attention_violation,
+            `full-attention-probability` = 0,
+            `block-marschak` = population$bm_violation,
+            omnibus = max(
+              population$attention_violation,
+              population$bm_violation,
+              na.rm = TRUE
+            )
+          )
+          result_index <- result_index + 1L
+          result[[result_index]] <- data.frame(
+            design_id = row$design_id,
+            block = row$block,
+            replication = replication,
+            replication_seed = seed_replication,
+            universe_size = row$universe_size,
+            n_per_menu = row$n_per_menu,
+            menu_support = row$menu_support,
+            preference_design = row$preference_design,
+            stopping_design = row$stopping_design,
+            reach_design = row$reach_design,
+            dependence_design = row$dependence_design,
+            violation_design = row$violation_design,
+            violation_severity = row$violation_severity,
+            violation_magnitude = population$violation_magnitude,
+            restriction = diagnostic$restriction,
+            is_null = population_violation <= 1e-12,
+            population_violation = population_violation,
+            population_independent_compatible = independent_compatible,
+            population_robust_compatible = robust_compatible,
+            available = diagnostic$available,
+            n_restrictions = diagnostic$n_restrictions,
+            max_violation_estimate = diagnostic$max_violation_estimate,
+            max_violation_lower = diagnostic$max_violation_lower,
+            n_rejected = diagnostic$n_rejected,
+            reject = diagnostic$reject,
+            method = diagnostic$method,
+            probability_band_method = fit$options$band_method,
+            diagnostic_method = fit$options$diagnostic_method,
+            diagnostic_critical_value =
+              fit$options$diagnostic_critical_value,
+            alpha = diagnostic$alpha,
+            n_critical_draws = if (grepl("gaussian", diagnostic$method)) {
+              n_crit
+            } else {
+              NA_integer_
+            },
+            elapsed_seconds = fit$elapsed,
+            stringsAsFactors = FALSE
+          )
+        }
+      }
+    }
+
+    message(
+      "Completed ", row$design_id, " (", design_index, "/", nrow(design), ")"
+    )
+  }
+  do.call(rbind, result[seq_len(result_index)])
+}
+
 run_simulations <- function(design, block, n_rep, n_crit, seed) {
   if (block == "homogeneous-aom") {
     selected <- design[design$block == block, , drop = FALSE]
@@ -831,9 +1114,18 @@ run_simulations <- function(design, block, n_rep, n_crit, seed) {
       seed = seed
     ))
   }
-  if (block %in% c("hlao-diagnostic", "all")) {
+  if (block == "hlao-diagnostic") {
+    selected <- design[design$block == block, , drop = FALSE]
+    return(run_hlao_diagnostic_simulations(
+      selected,
+      n_rep = n_rep,
+      n_crit = n_crit,
+      seed = seed
+    ))
+  }
+  if (block == "all") {
     stop(
-      "The hlao-diagnostic block is not implemented yet; run a specific completed block.",
+      "Run each simulation block separately because their raw schemas differ.",
       call. = FALSE
     )
   }
