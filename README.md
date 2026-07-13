@@ -22,12 +22,35 @@ Rscript CCMM_2026_wp--tables.R
 Rscript CCMM_2026_wp--figures.R
 ```
 
-The new pipeline is under development. To inspect its planned Monte Carlo
-design without running simulations, use:
+The homogeneous-AOM simulation engine is implemented. It reproduces the seven
+menu-support designs, three menu-specific sample sizes, and four preference
+hypotheses reported in the supplemental appendix. The H-LAO and diagnostic
+blocks currently remain design-only.
+
+To inspect the complete planned Monte Carlo design without running simulations,
+use:
 
 ```text
 Rscript CCMM_2026_wp--simuls.R --design-only
 ```
+
+To run the 25-replication homogeneous-AOM pilot with 200 critical-value draws,
+use:
+
+```text
+Rscript CCMM_2026_wp--simuls.R --pilot --block=homogeneous-aom
+```
+
+For a quick smoke run, the replication and critical-draw counts can be
+overridden explicitly:
+
+```text
+Rscript CCMM_2026_wp--simuls.R --pilot --replications=1 --critical-draws=20
+```
+
+Pilot output is written to
+`output/CCMM_2026_wp--raw-homogeneous-aom--pilot.rds`; production output omits
+the `--pilot` suffix. Raw output is local by default.
 
 ## Software
 
