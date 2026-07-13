@@ -50,15 +50,17 @@ Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao
 
 H-LAO output records plug-in reach and full-attention estimates, weak-reach
 pairwise intervals, dependence-robust event intervals, population identified
-bounds, compatibility diagnostics, and runtime. General-event LPs are used for
-the four-alternative designs; the six-alternative sparse designs use the
-ranking-free pairwise procedure.
+bounds, compatibility diagnostics, and runtime. Every sample is analyzed with
+both finite-sample Hoeffding bands and covariance-aware correlated-Gaussian
+bands; `--critical-draws` controls the Gaussian simulation. General-event LPs
+are used for the four-alternative designs; the six-alternative sparse designs
+use the ranking-free pairwise procedure.
 
 For a quick smoke run, the replication and critical-draw counts can be
 overridden explicitly:
 
 ```text
-Rscript CCMM_2026_wp--simuls.R --pilot --replications=1 --critical-draws=20
+Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao --replications=1 --critical-draws=100
 ```
 
 Pilot output is written to

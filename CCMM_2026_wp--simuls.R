@@ -616,7 +616,7 @@ hlao_result_row <- function(design_row, replication, replication_seed,
   )
 }
 
-run_hlao_simulations <- function(design, n_rep, seed) {
+run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
   result <- list()
   result_index <- 0L
   population_cache <- list()
@@ -666,12 +666,28 @@ run_hlao_simulations <- function(design, n_rep, seed) {
       } else {
         NULL
       }
-      fit <- ramchoice::hlaoTest(
+      fit_hoeffding <- ramchoice::hlaoTest(
         sample$menu,
         sample$choice,
         events = event_argument,
-        alpha = 0.05
+        alpha = 0.05,
+        band_method = "hoeffding"
       )
+      set.seed(replication_seed(
+        seed,
+        2000L + design_index,
+        replication
+      ))
+      fit_gaussian <- ramchoice::hlaoTest(
+        sample$menu,
+        sample$choice,
+        events = event_argument,
+        alpha = 0.05,
+        band_method = "gaussian",
+        n_band_draws = n_crit
+      )
+      fits <- list(hoeffding = fit_hoeffding, gaussian = fit_gaussian)
+      fit <- fit_hoeffding
 
       for (attention_index in seq_len(nrow(fit$attention))) {
         estimate_row <- fit$attention[attention_index, ]
@@ -724,66 +740,68 @@ run_hlao_simulations <- function(design, n_rep, seed) {
         }
       }
 
-      for (pair_index in seq_len(nrow(fit$pairwise))) {
-        pair <- fit$pairwise[pair_index, ]
-        truth <- hlao_pairwise_truth(
-          population$rankings,
-          population$tau,
-          pair$earlier,
-          pair$later
-        )
-        population_pair <- population$analysis$pairwise[
-          population$analysis$pairwise$earlier == pair$earlier &
-            population$analysis$pairwise$later == pair$later,
-          ,
-          drop = FALSE
-        ]
-        target_valid <- row$dependence_design == "independent"
-        result_index <- result_index + 1L
-        result[[result_index]] <- hlao_result_row(
-          row, replication, seed_replication,
-          estimand_type = "pairwise-share",
-          estimand_id = paste0(pair$later, "-above-", pair$earlier),
-          truth = truth,
-          estimate = pair$estimate,
-          lower = pair$lower,
-          upper = pair$upper,
-          identified = population_pair$identified,
-          target_valid = target_valid,
-          earlier = pair$earlier,
-          later = pair$later,
-          method = pair$method,
-          alpha = pair$alpha,
-          elapsed_seconds = fit$elapsed,
-          population_independent_compatible = independent_compatible,
-          population_robust_compatible = robust_compatible
-        )
-      }
+      for (fit in fits) {
+        for (pair_index in seq_len(nrow(fit$pairwise))) {
+          pair <- fit$pairwise[pair_index, ]
+          truth <- hlao_pairwise_truth(
+            population$rankings,
+            population$tau,
+            pair$earlier,
+            pair$later
+          )
+          population_pair <- population$analysis$pairwise[
+            population$analysis$pairwise$earlier == pair$earlier &
+              population$analysis$pairwise$later == pair$later,
+            ,
+            drop = FALSE
+          ]
+          target_valid <- row$dependence_design == "independent"
+          result_index <- result_index + 1L
+          result[[result_index]] <- hlao_result_row(
+            row, replication, seed_replication,
+            estimand_type = "pairwise-share",
+            estimand_id = paste0(pair$later, "-above-", pair$earlier),
+            truth = truth,
+            estimate = pair$estimate,
+            lower = pair$lower,
+            upper = pair$upper,
+            identified = population_pair$identified,
+            target_valid = target_valid,
+            earlier = pair$earlier,
+            later = pair$later,
+            method = pair$method,
+            alpha = pair$alpha,
+            elapsed_seconds = fit$elapsed,
+            population_independent_compatible = independent_compatible,
+            population_robust_compatible = robust_compatible
+          )
+        }
 
-      if (nrow(fit$event_intervals)) {
-        interval <- fit$event_intervals[1L, ]
-        result_index <- result_index + 1L
-        result[[result_index]] <- hlao_result_row(
-          row, replication, seed_replication,
-          estimand_type = "preference-event",
-          estimand_id = population$event_name,
-          truth = population$event_truth,
-          lower = interval$lower,
-          upper = interval$upper,
-          identified = if (nrow(robust_bounds)) {
-            abs(robust_bounds$upper - robust_bounds$lower) < 1e-10
-          } else {
-            NA
-          },
-          target_valid = TRUE,
-          population_lower = if (nrow(robust_bounds)) robust_bounds$lower else NA_real_,
-          population_upper = if (nrow(robust_bounds)) robust_bounds$upper else NA_real_,
-          method = interval$method,
-          alpha = interval$alpha,
-          elapsed_seconds = fit$elapsed,
-          population_independent_compatible = independent_compatible,
-          population_robust_compatible = robust_compatible
-        )
+        if (nrow(fit$event_intervals)) {
+          interval <- fit$event_intervals[1L, ]
+          result_index <- result_index + 1L
+          result[[result_index]] <- hlao_result_row(
+            row, replication, seed_replication,
+            estimand_type = "preference-event",
+            estimand_id = population$event_name,
+            truth = population$event_truth,
+            lower = interval$lower,
+            upper = interval$upper,
+            identified = if (nrow(robust_bounds)) {
+              abs(robust_bounds$upper - robust_bounds$lower) < 1e-10
+            } else {
+              NA
+            },
+            target_valid = TRUE,
+            population_lower = if (nrow(robust_bounds)) robust_bounds$lower else NA_real_,
+            population_upper = if (nrow(robust_bounds)) robust_bounds$upper else NA_real_,
+            method = interval$method,
+            alpha = interval$alpha,
+            elapsed_seconds = fit$elapsed,
+            population_independent_compatible = independent_compatible,
+            population_robust_compatible = robust_compatible
+          )
+        }
       }
     }
 
@@ -806,7 +824,12 @@ run_simulations <- function(design, block, n_rep, n_crit, seed) {
   }
   if (block == "hlao") {
     selected <- design[design$block == block, , drop = FALSE]
-    return(run_hlao_simulations(selected, n_rep = n_rep, seed = seed))
+    return(run_hlao_simulations(
+      selected,
+      n_rep = n_rep,
+      n_crit = n_crit,
+      seed = seed
+    ))
   }
   if (block %in% c("hlao-diagnostic", "all")) {
     stop(
