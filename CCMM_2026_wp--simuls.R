@@ -20,6 +20,7 @@ output_dir <- file.path(project_root, "output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 master_seed <- 20260713L
+simulation_schema_version <- "2026-07-13-v1"
 production_replications <- 2000L
 critical_value_draws <- 2000L
 pilot_replications <- 25L
@@ -249,6 +250,13 @@ replication_seed <- function(seed, design_index, replication) {
   as.integer(candidate %% .Machine$integer.max)
 }
 
+design_seed_index <- function(row, fallback) {
+  if ("simulation_index" %in% names(row)) {
+    return(as.integer(row$simulation_index[[1L]]))
+  }
+  as.integer(fallback)
+}
+
 run_aom_simulations <- function(design, n_rep, n_crit, seed) {
   result <- vector("list", nrow(design) * n_rep)
   result_index <- 0L
@@ -256,6 +264,7 @@ run_aom_simulations <- function(design, n_rep, n_crit, seed) {
 
   for (design_index in seq_len(nrow(design))) {
     row <- design[design_index, ]
+    seed_index <- design_seed_index(row, design_index)
     menu_sizes <- aom_menu_sizes[[row$menu_support]]
     if (is.null(menu_sizes)) {
       stop("Unknown homogeneous-AOM menu support: ", row$menu_support, call. = FALSE)
@@ -272,7 +281,7 @@ run_aom_simulations <- function(design, n_rep, n_crit, seed) {
     population_results <- population_cache[[row$menu_support]]
 
     for (replication in seq_len(n_rep)) {
-      seed_replication <- replication_seed(seed, design_index, replication)
+      seed_replication <- replication_seed(seed, seed_index, replication)
       set.seed(seed_replication)
       sample <- simulate_aom_sample(row$n_per_menu, menu_sizes)
       fit <- ramchoice::aomTest(
@@ -785,6 +794,7 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
 
   for (design_index in seq_len(nrow(design))) {
     row <- design[design_index, ]
+    seed_index <- design_seed_index(row, design_index)
     config_id <- sub("-N[0-9]+$", "", row$design_id)
     if (is.null(population_cache[[config_id]])) {
       population <- build_hlao_population(row)
@@ -818,7 +828,7 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
     for (replication in seq_len(n_rep)) {
       seed_replication <- replication_seed(
         seed,
-        1000L + design_index,
+        1000L + seed_index,
         replication
       )
       set.seed(seed_replication)
@@ -837,7 +847,7 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
       )
       set.seed(replication_seed(
         seed,
-        2000L + design_index,
+        2000L + seed_index,
         replication
       ))
       fit_gaussian <- ramchoice::hlaoTest(
@@ -980,6 +990,7 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
 
   for (design_index in seq_len(nrow(design))) {
     row <- design[design_index, ]
+    seed_index <- design_seed_index(row, design_index)
     population <- build_hlao_diagnostic_population(row)
     compatibility <- population$analysis$compatibility
     independent_compatible <- compatibility$compatible[
@@ -992,7 +1003,7 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
     for (replication in seq_len(n_rep)) {
       seed_replication <- replication_seed(
         seed,
-        3000L + design_index,
+        3000L + seed_index,
         replication
       )
       set.seed(seed_replication)
@@ -1005,19 +1016,7 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
       )
       set.seed(replication_seed(
         seed,
-        4000L + design_index,
-        replication
-      ))
-      fit_gaussian <- ramchoice::hlaoTest(
-        sample$menu,
-        sample$choice,
-        alpha = 0.05,
-        band_method = "gaussian",
-        n_band_draws = n_crit
-      )
-      set.seed(replication_seed(
-        seed,
-        5000L + design_index,
+        4000L + seed_index,
         replication
       ))
       fit_delta <- ramchoice::hlaoTest(
@@ -1029,9 +1028,29 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
         n_band_draws = n_crit
       )
 
-      for (fit in list(fit_hoeffding, fit_gaussian, fit_delta)) {
-        for (diagnostic_index in seq_len(nrow(fit$specification))) {
-          diagnostic <- fit$specification[diagnostic_index, ]
+      diagnostic_fits <- list(
+        list(
+          specification = fit_hoeffding$specification,
+          fit = fit_hoeffding,
+          diagnostic_method = "outer"
+        ),
+        list(
+          specification = fit_delta$outer_specification,
+          fit = fit_delta,
+          diagnostic_method = "outer"
+        ),
+        list(
+          specification = fit_delta$specification,
+          fit = fit_delta,
+          diagnostic_method = "delta"
+        )
+      )
+
+      for (diagnostic_fit in diagnostic_fits) {
+        fit <- diagnostic_fit$fit
+        specification <- diagnostic_fit$specification
+        for (diagnostic_index in seq_len(nrow(specification))) {
+          diagnostic <- specification[diagnostic_index, ]
           population_violation <- switch(
             diagnostic$restriction,
             `attention-overload` = population$attention_violation,
@@ -1072,9 +1091,10 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
             reject = diagnostic$reject,
             method = diagnostic$method,
             probability_band_method = fit$options$band_method,
-            diagnostic_method = fit$options$diagnostic_method,
-            diagnostic_critical_value =
-              fit$options$diagnostic_critical_value,
+            diagnostic_method = diagnostic_fit$diagnostic_method,
+            diagnostic_critical_value = if (
+              diagnostic_fit$diagnostic_method == "delta"
+            ) fit$options$diagnostic_critical_value else NA_real_,
             alpha = diagnostic$alpha,
             n_critical_draws = if (grepl("gaussian", diagnostic$method)) {
               n_crit
@@ -1095,41 +1115,100 @@ run_hlao_diagnostic_simulations <- function(design, n_rep, n_crit, seed) {
   do.call(rbind, result[seq_len(result_index)])
 }
 
-run_simulations <- function(design, block, n_rep, n_crit, seed) {
+atomic_save_rds <- function(object, path) {
+  temporary <- paste0(path, ".tmp-", Sys.getpid())
+  on.exit(unlink(temporary), add = TRUE)
+  saveRDS(object, temporary)
+  if (!file.rename(temporary, path)) {
+    stop("Could not atomically save checkpoint: ", path, call. = FALSE)
+  }
+  invisible(path)
+}
+
+checkpoint_token <- function(value) {
+  gsub("[^A-Za-z0-9._-]", "_", value)
+}
+
+checkpoint_directory <- function(block, pilot, n_rep, n_crit) {
+  ramchoice_sha <- Sys.getenv("RAMCHOICE_GIT_SHA", unset = "unknown")
+  run_type <- if (pilot) "pilot" else "production"
+  file.path(
+    output_dir,
+    "checkpoints",
+    paste(
+      checkpoint_token(block),
+      run_type,
+      checkpoint_token(simulation_schema_version),
+      paste0("R", n_rep),
+      paste0("C", n_crit),
+      paste0("ramchoice-", checkpoint_token(ramchoice_sha)),
+      sep = "--"
+    )
+  )
+}
+
+run_design_chunk <- function(row, block, n_rep, n_crit, seed) {
   if (block == "homogeneous-aom") {
-    selected <- design[design$block == block, , drop = FALSE]
-    return(run_aom_simulations(
-      selected,
-      n_rep = n_rep,
-      n_crit = n_crit,
-      seed = seed
-    ))
+    return(run_aom_simulations(row, n_rep, n_crit, seed))
   }
   if (block == "hlao") {
-    selected <- design[design$block == block, , drop = FALSE]
-    return(run_hlao_simulations(
-      selected,
-      n_rep = n_rep,
-      n_crit = n_crit,
-      seed = seed
-    ))
+    return(run_hlao_simulations(row, n_rep, n_crit, seed))
   }
   if (block == "hlao-diagnostic") {
-    selected <- design[design$block == block, , drop = FALSE]
-    return(run_hlao_diagnostic_simulations(
-      selected,
-      n_rep = n_rep,
-      n_crit = n_crit,
-      seed = seed
-    ))
+    return(run_hlao_diagnostic_simulations(row, n_rep, n_crit, seed))
   }
+  stop("Unknown simulation block: ", block, call. = FALSE)
+}
+
+run_simulations <- function(design, block, n_rep, n_crit, seed, pilot) {
   if (block == "all") {
     stop(
       "Run each simulation block separately because their raw schemas differ.",
       call. = FALSE
     )
   }
-  stop("Unknown simulation block: ", block, call. = FALSE)
+  selected <- design[design$block == block, , drop = FALSE]
+  if (!nrow(selected)) {
+    stop("Unknown or empty simulation block: ", block, call. = FALSE)
+  }
+  selected$simulation_index <- seq_len(nrow(selected))
+  checkpoint_dir <- checkpoint_directory(block, pilot, n_rep, n_crit)
+  dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
+  chunks <- if (pilot) vector("list", nrow(selected)) else NULL
+  checkpoint_paths <- character(nrow(selected))
+  names(checkpoint_paths) <- selected$design_id
+
+  for (index in seq_len(nrow(selected))) {
+    row <- selected[index, , drop = FALSE]
+    checkpoint_path <- file.path(
+      checkpoint_dir,
+      sprintf("%03d--%s.rds", index, checkpoint_token(row$design_id))
+    )
+    if (file.exists(checkpoint_path)) {
+      chunk <- readRDS(checkpoint_path)
+      message("Resumed checkpoint: ", row$design_id)
+    } else {
+      chunk <- run_design_chunk(
+        row, block, n_rep = n_rep, n_crit = n_crit, seed = seed
+      )
+      atomic_save_rds(chunk, checkpoint_path)
+      message("Saved checkpoint: ", row$design_id)
+    }
+    if (!is.data.frame(chunk)) {
+      stop("Invalid checkpoint for design: ", row$design_id, call. = FALSE)
+    }
+    checkpoint_paths[[index]] <- substring(
+      normalizePath(checkpoint_path, winslash = "/", mustWork = TRUE),
+      nchar(normalizePath(project_root, winslash = "/", mustWork = TRUE)) + 2L
+    )
+    if (pilot) chunks[[index]] <- chunk
+    rm(chunk)
+  }
+
+  list(
+    results = if (pilot) do.call(rbind, chunks) else NULL,
+    result_files = checkpoint_paths
+  )
 }
 
 main <- function() {
@@ -1150,12 +1229,13 @@ main <- function() {
 
   started_at <- Sys.time()
   started_elapsed <- proc.time()[["elapsed"]]
-  raw <- run_simulations(
+  simulation <- run_simulations(
     design = design,
     block = options$block,
     n_rep = options$n_rep,
     n_crit = options$n_crit,
-    seed = master_seed
+    seed = master_seed,
+    pilot = options$pilot
   )
   ended_at <- Sys.time()
 
@@ -1165,26 +1245,32 @@ main <- function() {
     paste0("CCMM_2026_wp--raw-", options$block, suffix, ".rds")
   )
   selected_design <- design[design$block == options$block, , drop = FALSE]
-  saveRDS(
+  atomic_save_rds(
     list(
       design = selected_design,
-      results = raw,
+      results = simulation$results,
+      result_files = simulation$result_files,
       master_seed = master_seed,
       n_rep = options$n_rep,
       n_crit = options$n_crit,
       pilot = options$pilot,
       block = options$block,
+      simulation_schema_version = simulation_schema_version,
       started_at = started_at,
       ended_at = ended_at,
       elapsed_seconds = unname(proc.time()[["elapsed"]] - started_elapsed),
       ramchoice_version = as.character(utils::packageVersion("ramchoice")),
       ramchoice_git_sha = Sys.getenv("RAMCHOICE_GIT_SHA", unset = NA_character_),
+      replication_git_sha = Sys.getenv(
+        "REPLICATION_GIT_SHA",
+        unset = NA_character_
+      ),
       session_info = utils::sessionInfo()
     ),
     output_path
   )
   message("Wrote raw simulation results: ", output_path)
-  invisible(raw)
+  invisible(simulation)
 }
 
 if (sys.nframe() == 0L) {

@@ -22,6 +22,33 @@ Rscript CCMM_2026_wp--tables.R
 Rscript CCMM_2026_wp--figures.R
 ```
 
+## Production run
+
+The production design uses 2,000 Monte Carlo replications and 2,000 simulated
+critical-value draws. On Windows, launch the complete run with:
+
+```text
+0000_run-production.cmd
+```
+
+The launcher runs the homogeneous AOM, H-LAO estimation/inference, and H-LAO
+diagnostic blocks concurrently. It records the `ramchoice` and replication Git
+commits, writes separate logs under `output/production-logs/`, waits for all
+three blocks, and then renders the production tables and figures. It does not
+copy, commit, or push generated files.
+
+Each design is checkpointed separately under `output/checkpoints/`. Reissuing
+the same command with the same design schema, replication count, critical-draw
+count, and `ramchoice` commit resumes completed designs instead of rerunning
+them. Thus an interrupted production run can be restarted with the same
+one-line command.
+
+For production runs, the block-level raw `.rds` file is a lightweight manifest
+that records metadata and the relative paths of its per-design raw
+checkpoints. The table and figure scripts read one design at a time, avoiding a
+single multi-million-row object in memory. Keep the manifest and checkpoint
+directory together when archiving raw results.
+
 The homogeneous-AOM simulation engine reproduces the seven menu-support
 designs, three menu-specific sample sizes, and four preference hypotheses
 reported in the supplemental appendix. The H-LAO engine implements the ten
@@ -81,6 +108,17 @@ Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao --replications=1 --critical-
 Pilot output is written to
 `output/CCMM_2026_wp--raw-homogeneous-aom--pilot.rds`; production output omits
 the `--pilot` suffix. Raw output is local by default.
+
+Pilot tables and figures can be regenerated with:
+
+```text
+Rscript CCMM_2026_wp--tables.R --pilot
+Rscript CCMM_2026_wp--figures.R --pilot
+```
+
+Their filenames begin with `pilot_`; the paper-repository copy helper excludes
+these scratch artifacts. Production renderers create four LaTeX tables and two
+PDF figures without the prefix.
 
 ## Software
 
