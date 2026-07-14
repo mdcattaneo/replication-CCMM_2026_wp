@@ -26,13 +26,38 @@ directories under `/scratch/gpfs/` to verify the sponsor path before continuing.
 
 ## 2. Clone and set up persistent R packages
 
+The replication repository is public, but `ramchoice` is private. Configure a
+GitHub SSH key on Della before running setup. First inspect existing keys and
+create an Ed25519 key only if one is not already present:
+
+```bash
+ls -la ~/.ssh
+test -f ~/.ssh/id_ed25519 || \
+  ssh-keygen -t ed25519 -C "cattaneo@princeton.edu"
+cat ~/.ssh/id_ed25519.pub
+```
+
+Add the displayed public key as an authentication key at
+<https://github.com/settings/ssh/new>, signing into GitHub through Google in a
+local browser. Then verify the connection from Della:
+
+```bash
+ssh -T git@github.com
+```
+
+Accept GitHub's host key if prompted. A successful test identifies the GitHub
+account and notes that GitHub does not provide shell access.
+
+Now clone and set up the project:
+
 ```bash
 git clone https://github.com/mdcattaneo/replication-CCMM_2026_wp.git && \
   cd replication-CCMM_2026_wp && \
   bash della/setup-della.sh
 ```
 
-The setup script loads `R/4.5.1`, clones the tested `ramchoice` commit into a
+The setup script loads `R/4.5.1`, clones the tested `ramchoice` commit over SSH
+into a
 sibling directory, installs dependencies and `ramchoice` in the persistent R
 library under your home directory, and creates the Slurm log directory. It does
 not use a temporary or repository-local R library.

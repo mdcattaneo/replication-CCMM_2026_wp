@@ -6,12 +6,13 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BASE_DIR=$(dirname "$REPO_ROOT")
 RAMCHOICE_REPO=${RAMCHOICE_REPO:-"$BASE_DIR/ramchoice"}
 RAMCHOICE_REF=${RAMCHOICE_REF:-b49da223774719a98e60a069864e3aee8726a21b}
+RAMCHOICE_REMOTE=${RAMCHOICE_REMOTE:-git@github.com:mdcattaneo/ramchoice.git}
 
 module purge
 module load R/4.5.1
 
 if [[ ! -d "$RAMCHOICE_REPO/.git" ]]; then
-  git clone https://github.com/mdcattaneo/ramchoice.git "$RAMCHOICE_REPO"
+  git clone "$RAMCHOICE_REMOTE" "$RAMCHOICE_REPO"
 fi
 
 git -C "$RAMCHOICE_REPO" fetch --tags origin
