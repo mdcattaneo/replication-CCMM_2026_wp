@@ -13,21 +13,23 @@ From a local terminal, connect to Della and complete Princeton authentication:
 ssh -o MACs=hmac-sha2-512 cattaneo@della.princeton.edu
 ```
 
-On Della, run `checkquota` to identify the research-group component of your
-scratch path. Replace `<ResearchGroup>` below with that value:
+The verified sponsor scratch directory for this project is `CATTANEO` (path
+names are case-sensitive). Create a personal project directory there:
 
 ```bash
-export CCMM_BASE=/scratch/gpfs/<ResearchGroup>/$USER
-mkdir -p "$CCMM_BASE"
-cd "$CCMM_BASE"
+export CCMM_BASE=/scratch/gpfs/CATTANEO/$USER
+mkdir -p "$CCMM_BASE" && cd "$CCMM_BASE"
 ```
+
+If access changes, use `checkquota`, `sshare -U -u "$USER"`, and the writable
+directories under `/scratch/gpfs/` to verify the sponsor path before continuing.
 
 ## 2. Clone and set up persistent R packages
 
 ```bash
-git clone https://github.com/mdcattaneo/replication-CCMM_2026_wp.git
-cd replication-CCMM_2026_wp
-bash della/setup-della.sh
+git clone https://github.com/mdcattaneo/replication-CCMM_2026_wp.git && \
+  cd replication-CCMM_2026_wp && \
+  bash della/setup-della.sh
 ```
 
 The setup script loads `R/4.5.1`, clones the tested `ramchoice` commit into a
