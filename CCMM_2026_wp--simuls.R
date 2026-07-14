@@ -20,7 +20,7 @@ output_dir <- file.path(project_root, "output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 master_seed <- 20260713L
-simulation_schema_version <- "2026-07-13-v1"
+simulation_schema_version <- "2026-07-14-v2"
 production_replications <- 2000L
 critical_value_draws <- 2000L
 pilot_replications <- 25L
@@ -177,6 +177,18 @@ positive_integer_argument <- function(args, prefix, default) {
   parsed
 }
 
+optional_positive_integer_argument <- function(args, prefix) {
+  value <- argument_value(args, prefix, default = NULL)
+  if (is.null(value)) {
+    return(NULL)
+  }
+  parsed <- suppressWarnings(as.integer(value))
+  if (is.na(parsed) || parsed <= 0L) {
+    stop(prefix, " must be a positive integer.", call. = FALSE)
+  }
+  parsed
+}
+
 parse_run_options <- function(args) {
   pilot <- "--pilot" %in% args
   default_replications <- if (pilot) pilot_replications else production_replications
@@ -190,10 +202,45 @@ parse_run_options <- function(args) {
     stop("Unknown simulation block: ", block, call. = FALSE)
   }
 
+  array_task <- optional_positive_integer_argument(args, "--array-task=")
+  design_id <- argument_value(args, "--design-id=", default = NULL)
+  checkpoint_only <- "--checkpoint-only" %in% args
+  assemble_only <- "--assemble-only" %in% args
+  design_only <- "--design-only" %in% args
+
+  if (!is.null(array_task) && !is.null(design_id)) {
+    stop("Use either --array-task or --design-id, not both.", call. = FALSE)
+  }
+  if (checkpoint_only && assemble_only) {
+    stop("--checkpoint-only and --assemble-only are mutually exclusive.", call. = FALSE)
+  }
+  if (checkpoint_only && is.null(array_task) && is.null(design_id)) {
+    stop(
+      "--checkpoint-only requires --array-task or --design-id.",
+      call. = FALSE
+    )
+  }
+  if ((!is.null(array_task) || !is.null(design_id)) && !checkpoint_only) {
+    stop(
+      "--array-task and --design-id may be used only with --checkpoint-only.",
+      call. = FALSE
+    )
+  }
+  if (assemble_only && block == "all") {
+    stop("Assemble one simulation block at a time.", call. = FALSE)
+  }
+  if (design_only && (checkpoint_only || assemble_only)) {
+    stop("--design-only cannot be combined with a run mode.", call. = FALSE)
+  }
+
   list(
-    design_only = "--design-only" %in% args,
+    design_only = design_only,
     pilot = pilot,
     block = block,
+    array_task = array_task,
+    design_id = design_id,
+    checkpoint_only = checkpoint_only,
+    assemble_only = assemble_only,
     n_rep = positive_integer_argument(
       args,
       "--replications=",
@@ -1131,6 +1178,7 @@ checkpoint_token <- function(value) {
 
 checkpoint_directory <- function(block, pilot, n_rep, n_crit) {
   ramchoice_sha <- Sys.getenv("RAMCHOICE_GIT_SHA", unset = "unknown")
+  ramchoice_token <- substr(checkpoint_token(ramchoice_sha), 1L, 12L)
   run_type <- if (pilot) "pilot" else "production"
   file.path(
     output_dir,
@@ -1141,7 +1189,7 @@ checkpoint_directory <- function(block, pilot, n_rep, n_crit) {
       checkpoint_token(simulation_schema_version),
       paste0("R", n_rep),
       paste0("C", n_crit),
-      paste0("ramchoice-", checkpoint_token(ramchoice_sha)),
+      paste0("rc-", ramchoice_token),
       sep = "--"
     )
   )
@@ -1160,18 +1208,26 @@ run_design_chunk <- function(row, block, n_rep, n_crit, seed) {
   stop("Unknown simulation block: ", block, call. = FALSE)
 }
 
-run_simulations <- function(design, block, n_rep, n_crit, seed, pilot) {
+run_simulations <- function(design, block, n_rep, n_crit, seed, pilot,
+                            design_id = NULL, require_checkpoints = FALSE) {
   if (block == "all") {
     stop(
       "Run each simulation block separately because their raw schemas differ.",
       call. = FALSE
     )
   }
-  selected <- design[design$block == block, , drop = FALSE]
-  if (!nrow(selected)) {
+  block_design <- design[design$block == block, , drop = FALSE]
+  if (!nrow(block_design)) {
     stop("Unknown or empty simulation block: ", block, call. = FALSE)
   }
-  selected$simulation_index <- seq_len(nrow(selected))
+  block_design$simulation_index <- seq_len(nrow(block_design))
+  selected <- block_design
+  if (!is.null(design_id)) {
+    selected <- selected[selected$design_id == design_id, , drop = FALSE]
+    if (nrow(selected) != 1L) {
+      stop("Unknown or non-unique design ID: ", design_id, call. = FALSE)
+    }
+  }
   checkpoint_dir <- checkpoint_directory(block, pilot, n_rep, n_crit)
   dir.create(checkpoint_dir, recursive = TRUE, showWarnings = FALSE)
   chunks <- if (pilot) vector("list", nrow(selected)) else NULL
@@ -1182,11 +1238,17 @@ run_simulations <- function(design, block, n_rep, n_crit, seed, pilot) {
     row <- selected[index, , drop = FALSE]
     checkpoint_path <- file.path(
       checkpoint_dir,
-      sprintf("%03d--%s.rds", index, checkpoint_token(row$design_id))
+      sprintf(
+        "%03d--%s.rds",
+        row$simulation_index[[1L]],
+        checkpoint_token(row$design_id)
+      )
     )
     if (file.exists(checkpoint_path)) {
       chunk <- readRDS(checkpoint_path)
       message("Resumed checkpoint: ", row$design_id)
+    } else if (require_checkpoints) {
+      stop("Required checkpoint is missing: ", checkpoint_path, call. = FALSE)
     } else {
       chunk <- run_design_chunk(
         row, block, n_rep = n_rep, n_crit = n_crit, seed = seed
@@ -1215,12 +1277,35 @@ main <- function() {
   args <- commandArgs(trailingOnly = TRUE)
   options <- parse_run_options(args)
   design <- build_design()
+  design$array_task <- seq_len(nrow(design))
   design_path <- file.path(output_dir, "CCMM_2026_wp--design.csv")
 
   if (options$design_only) {
     utils::write.csv(design, design_path, row.names = FALSE)
     message("Wrote simulation design: ", design_path)
     return(invisible(design))
+  }
+
+  if (!is.null(options$array_task)) {
+    if (options$array_task > nrow(design)) {
+      stop(
+        "--array-task exceeds the ", nrow(design), "-row design.",
+        call. = FALSE
+      )
+    }
+    task_design <- design[options$array_task, , drop = FALSE]
+    options$block <- task_design$block[[1L]]
+    options$design_id <- task_design$design_id[[1L]]
+    message(
+      "Array task ", options$array_task, " maps to ", options$design_id,
+      " in block ", options$block, "."
+    )
+  } else if (!is.null(options$design_id)) {
+    task_design <- design[design$design_id == options$design_id, , drop = FALSE]
+    if (nrow(task_design) != 1L) {
+      stop("Unknown or non-unique design ID: ", options$design_id, call. = FALSE)
+    }
+    options$block <- task_design$block[[1L]]
   }
 
   if (!requireNamespace("ramchoice", quietly = TRUE)) {
@@ -1235,9 +1320,16 @@ main <- function() {
     n_rep = options$n_rep,
     n_crit = options$n_crit,
     seed = master_seed,
-    pilot = options$pilot
+    pilot = options$pilot,
+    design_id = options$design_id,
+    require_checkpoints = options$assemble_only
   )
   ended_at <- Sys.time()
+
+  if (options$checkpoint_only) {
+    message("Checkpoint task completed without writing a shared manifest.")
+    return(invisible(simulation))
+  }
 
   suffix <- if (options$pilot) "--pilot" else ""
   output_path <- file.path(
@@ -1255,6 +1347,7 @@ main <- function() {
       n_crit = options$n_crit,
       pilot = options$pilot,
       block = options$block,
+      assembled_only = options$assemble_only,
       simulation_schema_version = simulation_schema_version,
       started_at = started_at,
       ended_at = ended_at,

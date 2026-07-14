@@ -43,6 +43,12 @@ count, and `ramchoice` commit resumes completed designs instead of rerunning
 them. Thus an interrupted production run can be restarted with the same
 one-line command.
 
+For Princeton's Della cluster, the tracked [`della/`](della/) workflow submits
+the 76 designs as independent Slurm array tasks and renders results in a
+dependent assembly job. Start with [`della/README.md`](della/README.md); it
+contains the one-time setup, three-design smoke test, production submission,
+monitoring, and retrieval commands.
+
 For production runs, the block-level raw `.rds` file is a lightweight manifest
 that records metadata and the relative paths of its per-design raw
 checkpoints. The table and figure scripts read one design at a time, avoiding a
@@ -62,6 +68,11 @@ use:
 ```text
 Rscript CCMM_2026_wp--simuls.R --design-only
 ```
+
+The generated design table includes the stable `array_task` index used by the
+Della job array. Cluster tasks may also select a design explicitly with
+`--design-id`, but both selectors are restricted to `--checkpoint-only` mode.
+The `--assemble-only` mode fails if any expected checkpoint is absent.
 
 To run the 25-replication homogeneous-AOM pilot with 200 critical-value draws,
 use:
