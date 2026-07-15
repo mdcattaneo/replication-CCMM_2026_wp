@@ -70,9 +70,15 @@ plot_reach_performance <- function(object, pilot) {
       drop = FALSE
     ]
     data$method_group <- ifelse(
-      grepl("hoeffding", data$method), "Hoeffding", "Correlated Gaussian"
+      grepl("^studentized", data$method),
+      "Studentized",
+      ifelse(
+        grepl("hoeffding", data$method),
+        "Hoeffding",
+        "Correlated Gaussian"
+      )
     )
-    for (method in c("Hoeffding", "Correlated Gaussian")) {
+    for (method in c("Hoeffding", "Correlated Gaussian", "Studentized")) {
       selected <- data[data$method_group == method, , drop = FALSE]
       if (!nrow(selected)) next
       summary_index <- summary_index + 1L
@@ -89,15 +95,15 @@ plot_reach_performance <- function(object, pilot) {
   designs <- do.call(rbind, summaries)
 
   path <- figure_path("CCMM_2026_wp--figure-hlao-reach.pdf", pilot)
-  grDevices::pdf(path, width = 8.2, height = 6.4, useDingbats = FALSE)
+  grDevices::pdf(path, width = 11.4, height = 6.4, useDingbats = FALSE)
   on.exit(grDevices::dev.off(), add = TRUE)
-  graphics::par(mfrow = c(2L, 2L), mar = c(4.2, 4.2, 2.2, 1.0), las = 1)
+  graphics::par(mfrow = c(2L, 3L), mar = c(4.2, 4.2, 2.2, 1.0), las = 1)
   colors <- c(high = "#0072B2", low = "#D55E00", zero = "#009E73")
   points <- c(high = 16L, low = 17L, zero = 15L)
   sample_sizes <- sort(unique(designs$n_per_menu))
 
   for (metric in c("coverage", "width")) {
-    for (method in c("Hoeffding", "Correlated Gaussian")) {
+    for (method in c("Hoeffding", "Correlated Gaussian", "Studentized")) {
       selected <- designs[designs$method_group == method, , drop = FALSE]
       y <- selected[[metric]]
       limits <- if (metric == "coverage") c(0.75, 1.01) else c(0, max(y, na.rm = TRUE) * 1.08)
@@ -152,7 +158,13 @@ plot_runtime <- function(object, pilot) {
     design <- selected_designs[design_index, ]
     config <- sub("^HLAO-(H[0-9]+)-.*$", "\\1", design$design_id)
     data <- result_data(object, design$design_id)
-    data <- data[data$estimand_type == "pairwise-share", , drop = FALSE]
+    data <- data[
+      data$estimand_type == "pairwise-share" &
+        !grepl("^studentized", data$method),
+      ,
+      drop = FALSE
+    ]
+    if (!(config %in% configurations)) next
     data$method_group <- ifelse(
       grepl("hoeffding", data$method), "Hoeffding", "Correlated Gaussian"
     )

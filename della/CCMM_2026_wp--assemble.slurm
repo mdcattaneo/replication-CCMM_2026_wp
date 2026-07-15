@@ -18,7 +18,8 @@ export R_LIBS_USER=${R_LIBS_USER:-"$HOME/R/x86_64-pc-linux-gnu-library/$R_MINOR"
 export RAMCHOICE_GIT_SHA=$(git -C "$RAMCHOICE_REPO" rev-parse HEAD)
 export REPLICATION_GIT_SHA=$(git rev-parse HEAD)
 
-for block in homogeneous-aom hlao hlao-diagnostic; do
+IFS=',' read -r -a blocks <<< "${CCMM_BLOCKS:-homogeneous-aom,hlao,hlao-diagnostic}"
+for block in "${blocks[@]}"; do
   Rscript --vanilla CCMM_2026_wp--simuls.R \
     "--block=$block" \
     --assemble-only

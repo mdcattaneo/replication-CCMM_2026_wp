@@ -44,7 +44,7 @@ them. Thus an interrupted production run can be restarted with the same
 one-line command.
 
 For Princeton's Della cluster, the tracked [`della/`](della/) workflow submits
-the 76 designs as independent Slurm array tasks and renders results in a
+the 80 designs as independent Slurm array tasks and renders results in a
 dependent assembly job. Start with [`della/README.md`](della/README.md); it
 contains the one-time setup, three-design smoke test, production submission,
 monitoring, and retrieval commands.
@@ -57,8 +57,10 @@ directory together when archiving raw results.
 
 The homogeneous-AOM simulation engine reproduces the seven menu-support
 designs, three menu-specific sample sizes, and four preference hypotheses
-reported in the supplemental appendix. The H-LAO engine implements the ten
-planned heterogeneous-preference configurations at four sample sizes. The
+reported in the supplemental appendix. The H-LAO engine implements eleven
+heterogeneous-preference configurations at four sample sizes. H11 preserves
+prefix consideration and attention overload while violating Sequential Path
+Independence. The
 separate diagnostic block implements calibrated null, local, and fixed
 alternatives for attention-overload and Block--Marschak restrictions.
 
@@ -93,13 +95,15 @@ To run the 25-replication H-LAO specification-diagnostic pilot, use:
 Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao-diagnostic
 ```
 
-H-LAO output records plug-in reach and full-attention estimates, weak-reach
-pairwise intervals, dependence-robust event intervals, population identified
-bounds, compatibility diagnostics, and runtime. Every sample is analyzed with
-both finite-sample Hoeffding bands and covariance-aware correlated-Gaussian
-bands; `--critical-draws` controls the Gaussian simulation. General-event LPs
-are used for the four-alternative designs; the six-alternative sparse designs
-use the ranking-free pairwise procedure.
+H-LAO output records plug-in reach and full-attention estimates, projection
+and studentized undivided-moment pairwise confidence sets,
+dependence-robust and no-SPI event intervals, population identified bounds,
+compatibility diagnostics, and runtime. Every sample is analyzed with both
+finite-sample Hoeffding bands and covariance-aware correlated-Gaussian bands;
+`--critical-draws` controls the Gaussian simulation. No-SPI event projections
+are evaluated in the targeted H01, H05, H07, and H11 configurations.
+General-event LPs are used for the four-alternative designs; the
+six-alternative sparse designs use the ranking-free pairwise procedure.
 
 The diagnostic block studies simultaneous attention-overload and
 Block--Marschak specification checks under a valid null and local or fixed

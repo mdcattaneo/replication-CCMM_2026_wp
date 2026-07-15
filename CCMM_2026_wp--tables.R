@@ -86,7 +86,11 @@ config_id <- function(design_id) {
 }
 
 method_group <- function(method) {
-  ifelse(grepl("hoeffding", method), "Hoeffding", "Gaussian")
+  ifelse(
+    grepl("^studentized", method),
+    "Studentized",
+    ifelse(grepl("hoeffding", method), "Hoeffding", "Gaussian")
+  )
 }
 
 build_aom_table <- function(object, pilot) {
@@ -217,24 +221,27 @@ interval_summary <- function(data, estimand_type, group) {
   c(coverage = mean_na(selected$covered), width = mean_na(selected$width))
 }
 
-interval_panel <- function(object, configs, estimand_type) {
+interval_panel <- function(object, configs, estimand_type,
+                           groups = c("Hoeffding", "Gaussian")) {
   rows <- character(0L)
   for (config in configs) {
     for (sample_size in c(100L, 500L)) {
       design <- paste0("HLAO-", config, "-N", sprintf("%03d", sample_size))
       data <- result_data(object, design)
-      hoeffding <- interval_summary(data, estimand_type, "Hoeffding")
-      gaussian <- interval_summary(data, estimand_type, "Gaussian")
+      summaries <- lapply(groups, function(group) {
+        interval_summary(data, estimand_type, group)
+      })
       rows <- c(rows, paste0(
-        paste(
+        paste(c(
           config,
           sample_size,
-          format_rate(hoeffding[["coverage"]]),
-          format_number(hoeffding[["width"]]),
-          format_rate(gaussian[["coverage"]]),
-          format_number(gaussian[["width"]]),
-          sep = " & "
-        ),
+          unlist(lapply(summaries, function(summary) {
+            c(
+              format_rate(summary[["coverage"]]),
+              format_number(summary[["width"]])
+            )
+          }))
+        ), collapse = " & "),
         " \\\\"
       ))
     }
@@ -244,34 +251,102 @@ interval_panel <- function(object, configs, estimand_type) {
 }
 
 build_hlao_inference_table <- function(object, pilot) {
-  pairwise <- interval_panel(object, sprintf("H%02d", 1:10), "pairwise-share")
-  events <- interval_panel(object, sprintf("H%02d", 1:8), "preference-event")
+  pairwise <- interval_panel(
+    object,
+    sprintf("H%02d", 1:10),
+    "pairwise-share",
+    groups = c("Hoeffding", "Gaussian", "Studentized")
+  )
   lines <- c(
     "\\begin{table}[t]",
     "\\centering",
-    "\\caption{H-LAO confidence intervals}",
+    "\\caption{H-LAO pairwise confidence sets}",
     "\\label{tab:simulation-hlao-inference}",
-    "\\begin{tabular}{lrrrrr}",
+    "\\resizebox{\\textwidth}{!}{%",
+    "\\begin{tabular}{lrrrrrrr}",
     "\\toprule",
-    "& & \\multicolumn{2}{c}{Hoeffding} & \\multicolumn{2}{c}{Correlated Gaussian} \\\\",
-    "\\cmidrule(lr){3-4} \\cmidrule(lr){5-6}",
-    "Design & $n$ & Coverage & Width & Coverage & Width \\\\",
+    "& & \\multicolumn{2}{c}{Hoeffding projection} & \\multicolumn{2}{c}{Gaussian projection} & \\multicolumn{2}{c}{Studentized moment} \\\\",
+    "\\cmidrule(lr){3-4} \\cmidrule(lr){5-6} \\cmidrule(lr){7-8}",
+    "Design & $n$ & Coverage & Width & Coverage & Width & Coverage & Width \\\\",
     "\\midrule",
-    "\\multicolumn{6}{l}{\\textit{Panel A. Pairwise preference shares under weak reach}} \\\\",
-    "\\addlinespace[2pt]",
     pairwise,
-    "\\midrule",
-    "\\multicolumn{6}{l}{\\textit{Panel B. General preference events under unrestricted dependence}} \\\\",
-    "\\addlinespace[2pt]",
-    events,
     "\\bottomrule",
     "\\end{tabular}",
+    "}",
     "\\begin{minipage}{0.91\\textwidth}",
-    "\\footnotesize Notes: Coverage and average width are averaged over replications and valid targets. The pairwise target is omitted in the dependent preference--attention design H07 because the weak-reach interpretation requires independence. Event intervals are reported for the four-alternative designs.",
+    "\\footnotesize Notes: Coverage and average width are averaged over replications and valid pairwise targets. H07 is omitted because pairwise point identification requires preference--stopping independence. The studentized procedure inverts the undivided moment with Bonferroni calibration; width is the total length when the confidence set is disconnected. At an exactly degenerate moment it reports $[0,1]$.",
     "\\end{minipage}",
     "\\end{table}"
   )
   write_latex(lines, "CCMM_2026_wp--table-hlao-inference.tex", pilot)
+}
+
+population_width <- function(data, mode) {
+  compatible_name <- paste0("population_", mode, "_compatible")
+  lower_name <- paste0("population_", mode, "_lower")
+  upper_name <- paste0("population_", mode, "_upper")
+  compatible <- unique(data[[compatible_name]])
+  lower <- unique(data[[lower_name]])
+  upper <- unique(data[[upper_name]])
+  compatible <- compatible[!is.na(compatible)]
+  lower <- lower[is.finite(lower)]
+  upper <- upper[is.finite(upper)]
+  if (!length(compatible) || !isTRUE(compatible[[1L]]) ||
+      !length(lower) || !length(upper)) {
+    return(NA_real_)
+  }
+  upper[[1L]] - lower[[1L]]
+}
+
+build_hlao_sensitivity_table <- function(object, pilot) {
+  rows <- character(0L)
+  for (config in c("H01", "H05", "H07", "H11")) {
+    for (sample_size in c(100L, 500L)) {
+      design <- paste0("HLAO-", config, "-N", sprintf("%03d", sample_size))
+      data <- result_data(object, design)
+      robust <- interval_summary(data, "preference-event", "Gaussian")
+      nopi <- interval_summary(data, "preference-event-nopi", "Gaussian")
+      rows <- c(rows, paste0(
+        paste(
+          config,
+          sample_size,
+          format_number(population_width(data, "independent")),
+          format_number(population_width(data, "robust")),
+          format_number(population_width(data, "nopi")),
+          format_rate(robust[["coverage"]]),
+          format_number(robust[["width"]]),
+          format_rate(nopi[["coverage"]]),
+          format_number(nopi[["width"]]),
+          sep = " & "
+        ),
+        " \\\\"
+      ))
+    }
+    rows <- c(rows, "\\addlinespace[2pt]")
+  }
+  rows <- rows[-length(rows)]
+  lines <- c(
+    "\\begin{table}[t]",
+    "\\centering",
+    "\\caption{Sensitivity to preference--stopping independence and Sequential Path Independence}",
+    "\\label{tab:simulation-hlao-sensitivity}",
+    "\\resizebox{\\textwidth}{!}{%",
+    "\\begin{tabular}{lrrrrrrrr}",
+    "\\toprule",
+    "& & \\multicolumn{3}{c}{Population identified-set width} & \\multicolumn{2}{c}{Dependence robust} & \\multicolumn{2}{c}{No SPI} \\\\",
+    "\\cmidrule(lr){3-5} \\cmidrule(lr){6-7} \\cmidrule(lr){8-9}",
+    "Design & $n$ & Independent & Dependent & No SPI & Coverage & Width & Coverage & Width \\\\",
+    "\\midrule",
+    rows,
+    "\\bottomrule",
+    "\\end{tabular}",
+    "}",
+    "\\begin{minipage}{0.96\\textwidth}",
+    "\\footnotesize Notes: Population columns report the width of the sharp identified interval for the designated preference event. Sampling columns use covariance-aware Gaussian/exact probability bands. H07 violates preference--stopping independence; H11 violates Sequential Path Independence while preserving prefix consideration, attention overload, and a stable preference marginal. Dashes mark a misspecified model or an inapplicable coverage calculation.",
+    "\\end{minipage}",
+    "\\end{table}"
+  )
+  write_latex(lines, "CCMM_2026_wp--table-hlao-sensitivity.tex", pilot)
 }
 
 diagnostic_method_label <- function(method) {
@@ -349,6 +424,7 @@ main <- function() {
   build_aom_table(aom, options$pilot)
   build_hlao_estimation_table(hlao, options$pilot)
   build_hlao_inference_table(hlao, options$pilot)
+  build_hlao_sensitivity_table(hlao, options$pilot)
   build_hlao_diagnostic_table(diagnostic, options$pilot)
 }
 

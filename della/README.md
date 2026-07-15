@@ -1,6 +1,6 @@
 # Della simulation workflow
 
-The production simulation is split into 76 independent design checkpoints.
+The production simulation is split into 80 independent design checkpoints.
 A Slurm array computes one checkpoint per task. A dependent assembly job runs
 only after every task succeeds; it creates the three raw manifests and renders
 the final tables and figures. Array tasks never write a shared manifest.
@@ -76,10 +76,11 @@ bash della/setup-della.sh
 bash della/submit-smoke.sh
 ```
 
-This submits one-replication tasks for the first homogeneous-AOM, H-LAO, and
-diagnostic designs. The command prints the job ID. Monitor it with the printed
-`squeue` and `sacct` commands, and inspect `output/della-logs/`. All three array
-tasks should finish with state `COMPLETED` and exit code `0:0` before production.
+This submits one-replication tasks for the first homogeneous-AOM and H-LAO
+designs, the no-SPI H11 design, and the first diagnostic design. The command
+prints the job ID. Monitor it with the printed `squeue` and `sacct` commands,
+and inspect `output/della-logs/`. All four array tasks should finish with state
+`COMPLETED` and exit code `0:0` before production.
 
 ## 4. Submit production
 
@@ -104,6 +105,19 @@ sacct -j <array-job-id>,<assembly-job-id> \
 Successful assembly creates `output/della-production-complete.txt`, the raw
 manifests and checkpoints under `output/`, and the rendered files under
 `tables/` and `figures/`. These generated outputs remain untracked.
+
+### Incremental H-LAO extension
+
+When the homogeneous-AOM and diagnostic production outputs already exist, run
+only the expanded H-LAO block with:
+
+```bash
+bash della/submit-hlao-extension.sh
+```
+
+This submits the 44 H-LAO tasks, including H11, and then assembles the H-LAO
+manifest and rerenders all tables and figures. It does not rerun the 21
+homogeneous-AOM or 15 diagnostic tasks.
 
 ## 5. Retrieve results
 

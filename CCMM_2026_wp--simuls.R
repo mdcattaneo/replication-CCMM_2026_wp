@@ -20,7 +20,7 @@ output_dir <- file.path(project_root, "output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 master_seed <- 20260713L
-simulation_schema_version <- "2026-07-14-v2"
+simulation_schema_version <- "2026-07-15-v4"
 production_replications <- 2000L
 critical_value_draws <- 2000L
 pilot_replications <- 25L
@@ -64,6 +64,7 @@ build_aom_design <- function() {
   design$stopping_design <- "logit-attention-alpha-2"
   design$reach_design <- "not-applicable"
   design$dependence_design <- "not-applicable"
+  design$path_independence_design <- "not-applicable"
   design$violation_design <- "published-baseline"
   design$violation_severity <- "not-applicable"
   design$design_id <- sprintf("AOM-%s-N%03d", design$support_id, design$n_per_menu)
@@ -74,29 +75,32 @@ build_aom_design <- function() {
 
 build_hlao_design <- function() {
   configurations <- data.frame(
-    config_id = sprintf("H%02d", 1:10),
-    universe_size = c(4L, 4L, 4L, 4L, 4L, 4L, 4L, 4L, 6L, 6L),
+    config_id = sprintf("H%02d", 1:11),
+    universe_size = c(4L, 4L, 4L, 4L, 4L, 4L, 4L, 4L, 6L, 6L, 4L),
     preference_design = c(
       "diffuse", "concentrated", "diffuse", "diffuse", "diffuse",
-      "diffuse", "concentrated", "diffuse", "diffuse", "concentrated"
+      "diffuse", "concentrated", "diffuse", "diffuse", "concentrated",
+      "late-concentrated"
     ),
     stopping_design = c(
       "geometric", "geometric", "rank-dependent", "alternative-dependent",
       "geometric", "rank-dependent", "alternative-dependent",
-      "rank-dependent", "geometric", "rank-dependent"
+      "rank-dependent", "geometric", "rank-dependent", "menu-dependent"
     ),
     reach_design = c(
       "high", "high", "high", "high", "low", "low", "low", "zero",
-      "high", "low"
+      "high", "low", "moderate"
     ),
     menu_support = c(
       "full", "full", "prefix-rich", "prefix-rich", "full", "prefix-rich",
-      "prefix-rich", "prefix-rich", "sparse-pairwise", "sparse-pairwise"
+      "prefix-rich", "prefix-rich", "sparse-pairwise", "sparse-pairwise",
+      "full"
     ),
     dependence_design = c(
       rep("independent", 6), "dependent", "independent", "independent",
-      "independent"
+      "independent", "independent"
     ),
+    path_independence_design = c(rep("satisfied", 10), "violated"),
     violation_design = "none",
     violation_severity = "not-applicable"
   )
@@ -133,6 +137,7 @@ build_diagnostic_design <- function() {
   design$reach_design <- "high"
   design$menu_support <- "full"
   design$dependence_design <- "independent"
+  design$path_independence_design <- "satisfied"
   design$design_id <- sprintf(
     "DIAG-%s-N%03d",
     design$diagnostic_id,
@@ -146,7 +151,8 @@ build_design <- function() {
   columns <- c(
     "design_id", "block", "universe_size", "n_per_menu",
     "preference_design", "stopping_design", "reach_design", "menu_support",
-    "dependence_design", "violation_design", "violation_severity"
+    "dependence_design", "path_independence_design", "violation_design",
+    "violation_severity"
   )
   design <- rbind(
     build_aom_design()[columns],
@@ -455,6 +461,12 @@ hlao_preference_distribution <- function(universe_size, design) {
       identical(as.integer(ranking), seq_len(universe_size))
     }))
     tau[baseline] <- tau[baseline] + 0.75
+  } else if (design == "late-concentrated") {
+    tau <- 0.05 * diffuse
+    late_best <- which(apply(rankings, 1L, function(ranking) {
+      identical(as.integer(ranking), rev(seq_len(universe_size)))
+    }))
+    tau[late_best] <- tau[late_best] + 0.95
   } else if (design == "degenerate") {
     tau <- numeric(nrow(rankings))
     baseline <- which(apply(rankings, 1L, function(ranking) {
@@ -541,6 +553,22 @@ hlao_prefix_masses <- function(continuation) {
   list(reach = reach, masses = masses)
 }
 
+hlao_menu_dependent_attention <- function(items, universe_size) {
+  alternative_reach <- seq(0.92, 0.62, length.out = universe_size)
+  menu_scale <- max(0.55, 1 - 0.10 * (length(items) - 1L))
+  reach <- alternative_reach[items] * menu_scale
+  masses <- c(
+    1 - reach[1L],
+    if (length(reach) > 1L) {
+      reach[-length(reach)] - reach[-1L]
+    } else {
+      numeric(0L)
+    },
+    reach[length(reach)]
+  )
+  list(reach = reach, masses = masses)
+}
+
 hlao_couple_margins <- function(row_margins, column_margins, row_order) {
   rows <- row_margins[row_order]
   columns <- column_margins
@@ -581,12 +609,16 @@ build_hlao_population <- function(design_row) {
   for (menu_index in seq_along(menus)) {
     items <- menus[[menu_index]]
     menu[menu_index, items] <- 1
-    attention <- hlao_prefix_masses(hlao_continuation(
-      items,
-      design_row$stopping_design,
-      design_row$reach_design,
-      universe_size
-    ))
+    attention <- if (design_row$stopping_design == "menu-dependent") {
+      hlao_menu_dependent_attention(items, universe_size)
+    } else {
+      hlao_prefix_masses(hlao_continuation(
+        items,
+        design_row$stopping_design,
+        design_row$reach_design,
+        universe_size
+      ))
+    }
     reach[[menu_index]] <- attention$reach
     masses[[menu_index]] <- attention$masses
     outside_prob[menu_index] <- attention$masses[1L]
@@ -784,9 +816,20 @@ hlao_result_row <- function(design_row, replication, replication_seed,
                             alternative = NA_integer_, earlier = NA_integer_,
                             later = NA_integer_, elapsed_seconds = NA_real_,
                             population_independent_compatible = NA,
-                            population_robust_compatible = NA) {
-  covered <- if (target_valid && is.finite(truth) && is.finite(lower) &&
-                 is.finite(upper)) {
+                            population_robust_compatible = NA,
+                            population_nopi_compatible = NA,
+                            population_independent_lower = NA_real_,
+                            population_independent_upper = NA_real_,
+                            population_robust_lower = NA_real_,
+                            population_robust_upper = NA_real_,
+                            population_nopi_lower = NA_real_,
+                            population_nopi_upper = NA_real_,
+                            covered_override = NULL, width_override = NULL,
+                            n_components = NA_integer_) {
+  covered <- if (!is.null(covered_override)) {
+    covered_override
+  } else if (target_valid && is.finite(truth) && is.finite(lower) &&
+             is.finite(upper)) {
     lower <= truth && truth <= upper
   } else {
     NA
@@ -803,6 +846,7 @@ hlao_result_row <- function(design_row, replication, replication_seed,
     stopping_design = design_row$stopping_design,
     reach_design = design_row$reach_design,
     dependence_design = design_row$dependence_design,
+    path_independence_design = design_row$path_independence_design,
     estimand_type = estimand_type,
     estimand_id = estimand_id,
     menu_id = menu_id,
@@ -820,13 +864,27 @@ hlao_result_row <- function(design_row, replication, replication_seed,
     lower = lower,
     upper = upper,
     covered = covered,
-    width = if (is.finite(lower) && is.finite(upper)) upper - lower else NA_real_,
+    width = if (!is.null(width_override)) {
+      width_override
+    } else if (is.finite(lower) && is.finite(upper)) {
+      upper - lower
+    } else {
+      NA_real_
+    },
+    n_components = n_components,
     identified = identified,
     target_valid = target_valid,
     population_lower = population_lower,
     population_upper = population_upper,
     population_independent_compatible = population_independent_compatible,
     population_robust_compatible = population_robust_compatible,
+    population_nopi_compatible = population_nopi_compatible,
+    population_independent_lower = population_independent_lower,
+    population_independent_upper = population_independent_upper,
+    population_robust_lower = population_robust_lower,
+    population_robust_upper = population_robust_upper,
+    population_nopi_lower = population_nopi_lower,
+    population_nopi_upper = population_nopi_upper,
     method = method,
     alpha = alpha,
     elapsed_seconds = elapsed_seconds,
@@ -855,7 +913,7 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
         population$prob,
         outside_prob = population$outside_prob,
         events = event_argument,
-        dependence = if (row$universe_size == 4L) "both" else "independent"
+        dependence = if (row$universe_size == 4L) "all" else "independent"
       )
       population_cache[[config_id]] <- population
     }
@@ -867,9 +925,19 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
     robust_compatible <- compatibility$compatible[
       match("robust", compatibility$mode)
     ]
+    nopi_compatible <- compatibility$compatible[
+      match("noPI", compatibility$mode)
+    ]
     if (!length(robust_compatible)) robust_compatible <- NA
+    if (!length(nopi_compatible)) nopi_compatible <- NA
+    independent_bounds <- population$analysis$bounds[
+      population$analysis$bounds$mode == "independent", , drop = FALSE
+    ]
     robust_bounds <- population$analysis$bounds[
       population$analysis$bounds$mode == "robust", , drop = FALSE
+    ]
+    nopi_bounds <- population$analysis$bounds[
+      population$analysis$bounds$mode == "noPI", , drop = FALSE
     ]
 
     for (replication in seq_len(n_rep)) {
@@ -905,10 +973,41 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
         band_method = "gaussian",
         n_band_draws = n_crit
       )
+      nopi_fits <- list()
+      config_label <- sub("^HLAO-", "", config_id)
+      if (!is.null(event_argument) &&
+          config_label %in% c("H01", "H05", "H07", "H11")) {
+        fit_nopi_hoeffding <- ramchoice::hlaoNoPITest(
+          sample$menu,
+          sample$choice,
+          events = event_argument,
+          alpha = 0.05,
+          band_method = "hoeffding"
+        )
+        set.seed(replication_seed(
+          seed,
+          2500L + seed_index,
+          replication
+        ))
+        fit_nopi_gaussian <- ramchoice::hlaoNoPITest(
+          sample$menu,
+          sample$choice,
+          events = event_argument,
+          alpha = 0.05,
+          band_method = "gaussian",
+          n_band_draws = n_crit
+        )
+        nopi_fits <- list(
+          hoeffding = fit_nopi_hoeffding,
+          gaussian = fit_nopi_gaussian
+        )
+      }
       fits <- list(hoeffding = fit_hoeffding, gaussian = fit_gaussian)
       fit <- fit_hoeffding
 
-      for (attention_index in seq_len(nrow(fit$attention))) {
+      for (attention_index in if (
+        row$path_independence_design == "satisfied"
+      ) seq_len(nrow(fit$attention)) else integer(0L)) {
         estimate_row <- fit$attention[attention_index, ]
         truth_row <- population$analysis$attention[
           population$analysis$attention$menu_id == estimate_row$menu_id &
@@ -930,11 +1029,13 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
           method = "plug-in",
           elapsed_seconds = fit$elapsed,
           population_independent_compatible = independent_compatible,
-          population_robust_compatible = robust_compatible
+          population_robust_compatible = robust_compatible,
+          population_nopi_compatible = nopi_compatible
         )
       }
 
-      if (!is.null(fit$full_attention) &&
+      if (row$path_independence_design == "satisfied" &&
+          !is.null(fit$full_attention) &&
           !is.null(population$analysis$full_attention)) {
         for (menu_index in seq_len(nrow(population$menu))) {
           for (alternative in which(population$menu[menu_index, ] == 1L)) {
@@ -953,7 +1054,8 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
               method = "recursive-plug-in",
               elapsed_seconds = fit$elapsed,
               population_independent_compatible = independent_compatible,
-              population_robust_compatible = robust_compatible
+              population_robust_compatible = robust_compatible,
+              population_nopi_compatible = nopi_compatible
             )
           }
         }
@@ -974,7 +1076,8 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
             ,
             drop = FALSE
           ]
-          target_valid <- row$dependence_design == "independent"
+          target_valid <- row$dependence_design == "independent" &&
+            row$path_independence_design == "satisfied"
           result_index <- result_index + 1L
           result[[result_index]] <- hlao_result_row(
             row, replication, seed_replication,
@@ -992,7 +1095,8 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
             alpha = pair$alpha,
             elapsed_seconds = fit$elapsed,
             population_independent_compatible = independent_compatible,
-            population_robust_compatible = robust_compatible
+            population_robust_compatible = robust_compatible,
+            population_nopi_compatible = nopi_compatible
           )
         }
 
@@ -1011,16 +1115,164 @@ run_hlao_simulations <- function(design, n_rep, n_crit, seed) {
             } else {
               NA
             },
-            target_valid = TRUE,
+            target_valid = row$path_independence_design == "satisfied",
             population_lower = if (nrow(robust_bounds)) robust_bounds$lower else NA_real_,
             population_upper = if (nrow(robust_bounds)) robust_bounds$upper else NA_real_,
             method = interval$method,
             alpha = interval$alpha,
             elapsed_seconds = fit$elapsed,
             population_independent_compatible = independent_compatible,
-            population_robust_compatible = robust_compatible
+            population_robust_compatible = robust_compatible,
+            population_nopi_compatible = nopi_compatible,
+            population_independent_lower = if (nrow(independent_bounds)) {
+              independent_bounds$lower
+            } else {
+              NA_real_
+            },
+            population_independent_upper = if (nrow(independent_bounds)) {
+              independent_bounds$upper
+            } else {
+              NA_real_
+            },
+            population_robust_lower = if (nrow(robust_bounds)) {
+              robust_bounds$lower
+            } else {
+              NA_real_
+            },
+            population_robust_upper = if (nrow(robust_bounds)) {
+              robust_bounds$upper
+            } else {
+              NA_real_
+            },
+            population_nopi_lower = if (nrow(nopi_bounds)) {
+              nopi_bounds$lower
+            } else {
+              NA_real_
+            },
+            population_nopi_upper = if (nrow(nopi_bounds)) {
+              nopi_bounds$upper
+            } else {
+              NA_real_
+            }
           )
         }
+      }
+
+      for (pair_index in seq_len(nrow(fit_hoeffding$pairwise_studentized))) {
+        pair <- fit_hoeffding$pairwise_studentized[pair_index, ]
+        truth <- hlao_pairwise_truth(
+          population$rankings,
+          population$tau,
+          pair$earlier,
+          pair$later
+        )
+        components <- fit_hoeffding$pairwise_studentized_components[
+          fit_hoeffding$pairwise_studentized_components$menu_id == pair$menu_id,
+          ,
+          drop = FALSE
+        ]
+        target_valid <- row$dependence_design == "independent" &&
+          row$path_independence_design == "satisfied"
+        covered <- if (target_valid) {
+          any(components$lower <= truth & components$upper >= truth)
+        } else {
+          NA
+        }
+        population_pair <- population$analysis$pairwise[
+          population$analysis$pairwise$earlier == pair$earlier &
+            population$analysis$pairwise$later == pair$later,
+          ,
+          drop = FALSE
+        ]
+        result_index <- result_index + 1L
+        result[[result_index]] <- hlao_result_row(
+          row, replication, seed_replication,
+          estimand_type = "pairwise-share",
+          estimand_id = paste0(pair$later, "-above-", pair$earlier),
+          truth = truth,
+          estimate = pair$estimate,
+          lower = pair$lower,
+          upper = pair$upper,
+          identified = population_pair$identified,
+          target_valid = target_valid,
+          earlier = pair$earlier,
+          later = pair$later,
+          method = pair$method,
+          alpha = pair$alpha,
+          elapsed_seconds = fit_hoeffding$elapsed,
+          population_independent_compatible = independent_compatible,
+          population_robust_compatible = robust_compatible,
+          population_nopi_compatible = nopi_compatible,
+          covered_override = covered,
+          width_override = pair$width,
+          n_components = pair$n_components
+        )
+      }
+
+      for (nopi_fit in nopi_fits) {
+        if (!nrow(nopi_fit$intervals)) next
+        interval <- nopi_fit$intervals[1L, ]
+        result_index <- result_index + 1L
+        result[[result_index]] <- hlao_result_row(
+          row, replication, seed_replication,
+          estimand_type = "preference-event-nopi",
+          estimand_id = population$event_name,
+          truth = population$event_truth,
+          lower = interval$lower,
+          upper = interval$upper,
+          identified = if (nrow(nopi_bounds)) {
+            abs(nopi_bounds$upper - nopi_bounds$lower) < 1e-10
+          } else {
+            NA
+          },
+          target_valid = TRUE,
+          population_lower = if (nrow(nopi_bounds)) {
+            nopi_bounds$lower
+          } else {
+            NA_real_
+          },
+          population_upper = if (nrow(nopi_bounds)) {
+            nopi_bounds$upper
+          } else {
+            NA_real_
+          },
+          method = interval$method,
+          alpha = interval$alpha,
+          elapsed_seconds = nopi_fit$elapsed,
+          population_independent_compatible = independent_compatible,
+          population_robust_compatible = robust_compatible,
+          population_nopi_compatible = nopi_compatible,
+          population_independent_lower = if (nrow(independent_bounds)) {
+            independent_bounds$lower
+          } else {
+            NA_real_
+          },
+          population_independent_upper = if (nrow(independent_bounds)) {
+            independent_bounds$upper
+          } else {
+            NA_real_
+          },
+          population_robust_lower = if (nrow(robust_bounds)) {
+            robust_bounds$lower
+          } else {
+            NA_real_
+          },
+          population_robust_upper = if (nrow(robust_bounds)) {
+            robust_bounds$upper
+          } else {
+            NA_real_
+          },
+          population_nopi_lower = if (nrow(nopi_bounds)) {
+            nopi_bounds$lower
+          } else {
+            NA_real_
+          },
+          population_nopi_upper = if (nrow(nopi_bounds)) {
+            nopi_bounds$upper
+          } else {
+            NA_real_
+          }
+        )
       }
     }
 
