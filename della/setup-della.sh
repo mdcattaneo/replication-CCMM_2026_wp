@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BASE_DIR=$(dirname "$REPO_ROOT")
 RAMCHOICE_REPO=${RAMCHOICE_REPO:-"$BASE_DIR/ramchoice"}
-RAMCHOICE_REF=${RAMCHOICE_REF:-b49da223774719a98e60a069864e3aee8726a21b}
+RAMCHOICE_REF=${RAMCHOICE_REF:-7758cfebf7a51f7e9bad7213879a9edc597271eb}
 RAMCHOICE_REMOTE=${RAMCHOICE_REMOTE:-git@github.com:mdcattaneo/ramchoice.git}
 
 module purge
