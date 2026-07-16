@@ -57,11 +57,14 @@ directory together when archiving raw results.
 
 The homogeneous-AOM simulation engine reproduces the seven menu-support
 designs, three menu-specific sample sizes, and four preference hypotheses
-reported in the supplemental appendix. The H-LAO engine implements eleven
-heterogeneous-preference configurations at four sample sizes. H11 preserves
-prefix consideration and attention overload while violating Sequential Path
-Independence. The
-separate diagnostic block implements calibrated null, local, and fixed
+reported in the supplemental appendix. Each AOM replication records the
+all-inequalities least-favorable (`LF`) procedure corresponding directly to
+Theorem 9 and its GMS refinement from the same Gaussian draws; the table
+renderer reports the two procedures separately. The H-LAO engine implements
+eleven heterogeneous-preference configurations at four sample sizes. H11
+preserves prefix consideration and attention overload while violating
+Sequential Path Independence. The separate diagnostic block implements
+calibrated null, local, and fixed
 alternatives for attention-overload and Block--Marschak restrictions.
 
 To inspect the complete planned Monte Carlo design without running simulations,

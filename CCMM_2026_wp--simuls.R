@@ -341,7 +341,7 @@ run_aom_simulations <- function(design, n_rep, n_crit, seed) {
         sample$menu,
         sample$choice,
         pref_list = aom_preferences,
-        method = "GMS",
+        method = "ALL",
         alpha = 0.05,
         nCritSimu = n_crit
       )

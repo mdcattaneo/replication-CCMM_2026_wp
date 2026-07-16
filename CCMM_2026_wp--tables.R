@@ -93,8 +93,18 @@ method_group <- function(method) {
   )
 }
 
-build_aom_table <- function(object, pilot) {
+build_aom_table <- function(object, pilot, method, filename, caption, label,
+                            notes) {
   data <- result_data(object)
+  data <- data[data$method == method, , drop = FALSE]
+  if (!nrow(data)) {
+    message <- paste0("No homogeneous-AOM results for method ", method, ".")
+    if (pilot) {
+      warning(message, call. = FALSE)
+      return(invisible(NULL))
+    }
+    stop(message, call. = FALSE)
+  }
   support_order <- c(
     "sizes-2-to-6", "sizes-3-to-6", "sizes-4-to-6", "sizes-5-to-6",
     "sizes-2-3-4-6", "sizes-2-3-6", "sizes-2-6"
@@ -139,8 +149,8 @@ build_aom_table <- function(object, pilot) {
   lines <- c(
     "\\begin{table}[t]",
     "\\centering",
-    "\\caption{Finite-sample rejection probabilities: homogeneous AOM}",
-    "\\label{tab:simulation-aom-generated}",
+    paste0("\\caption{", caption, "}"),
+    paste0("\\label{", label, "}"),
     "\\begin{tabular}{lrrcccc}",
     "\\toprule",
     "Menu sizes & $n$ & Inequalities & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ \\\\",
@@ -149,11 +159,11 @@ build_aom_table <- function(object, pilot) {
     "\\bottomrule",
     "\\end{tabular}",
     "\\begin{minipage}{0.94\\textwidth}",
-    "\\footnotesize Notes: Entries are Monte Carlo rejection probabilities for the GMS test at the five-percent level. A dagger marks a preference ordering that satisfies the population inequalities. Each menu in the indicated support has the reported sample size.",
+    paste0("\\footnotesize Notes: ", notes, " A dagger marks a preference ordering that satisfies the population inequalities. Each menu in the indicated support has the reported sample size."),
     "\\end{minipage}",
     "\\end{table}"
   )
-  write_latex(lines, "CCMM_2026_wp--table-aom.tex", pilot)
+  write_latex(lines, filename, pilot)
 }
 
 estimation_summary <- function(data, estimand_type) {
@@ -421,7 +431,33 @@ main <- function() {
   aom <- read_block("homogeneous-aom", options$pilot)
   hlao <- read_block("hlao", options$pilot)
   diagnostic <- read_block("hlao-diagnostic", options$pilot)
-  build_aom_table(aom, options$pilot)
+  build_aom_table(
+    aom,
+    options$pilot,
+    method = "LF",
+    filename = "CCMM_2026_wp--table-aom.tex",
+    caption = "Finite-sample rejection probabilities: homogeneous AOM, all inequalities",
+    label = "tab:simulation-aom-generated",
+    notes = paste(
+      "Entries are Monte Carlo rejection probabilities at the five-percent",
+      "level for the all-inequalities feasible Gaussian test corresponding",
+      "to Theorem 9."
+    )
+  )
+  build_aom_table(
+    aom,
+    options$pilot,
+    method = "GMS",
+    filename = "CCMM_2026_wp--table-aom-gms.tex",
+    caption = "Finite-sample rejection probabilities: homogeneous AOM, GMS refinement",
+    label = "tab:simulation-aom-gms-generated",
+    notes = paste(
+      "Entries are Monte Carlo rejection probabilities at the five-percent",
+      "level for the Andrews--Soares GMS refinement. The implementation sets",
+      "\\texttt{MNRatioGMS}=1/\\log(N), so the recentering factor is",
+      "$1/\\sqrt{\\log(N)}$."
+    )
+  )
   build_hlao_estimation_table(hlao, options$pilot)
   build_hlao_inference_table(hlao, options$pilot)
   build_hlao_sensitivity_table(hlao, options$pilot)
