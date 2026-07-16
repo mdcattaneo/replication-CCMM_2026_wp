@@ -1,0 +1,26 @@
+# R session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Generated simulation artifacts
+/simuls/output/
+/simuls/tables/
+/simuls/figures/
+
+# Restricted empirical data and generated artifacts
+/empapp/data/
+/empapp/output/
+/empapp/tables/
+/empapp/figures/
+/empapp/*.csv
+/empapp/*.tsv
+/empapp/*.xlsx
+/empapp/*.xls
+/empapp/*.dta
+/empapp/*.sav
+/empapp/*.rds
+/empapp/*.RData
+/empapp/*.zip
+/empapp/*.pdf

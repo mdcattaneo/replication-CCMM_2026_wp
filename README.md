@@ -1,155 +1,93 @@
 # Replication: Cattaneo, Cheung, Ma, and Masatlioglu (2026)
 
-Replication and simulation files for *Attention Overload*. This repository is
-being updated for the paper's 2026 revision.
+Replication, simulation, and empirical-application code for *Attention
+Overload*. The repository is organized into two independent workflows:
 
-## R workflow
-
-The current simulation pipeline has three entry points:
-
-- `CCMM_2026_wp--simuls.R` runs the Monte Carlo experiments and writes raw
-  results to `output/`.
-- `CCMM_2026_wp--tables.R` reads raw results and writes paper-ready LaTeX
-  tables to `tables/`.
-- `CCMM_2026_wp--figures.R` reads raw results and writes paper-ready figures to
-  `figures/`.
-
-Run them from the repository root in this order:
-
-```text
-Rscript CCMM_2026_wp--simuls.R
-Rscript CCMM_2026_wp--tables.R
-Rscript CCMM_2026_wp--figures.R
-```
-
-## Production run
-
-The production design uses 2,000 Monte Carlo replications and 2,000 simulated
-critical-value draws. On Windows, launch the complete run with:
-
-```text
-0000_run-production.cmd
-```
-
-The launcher runs the homogeneous AOM, H-LAO estimation/inference, and H-LAO
-diagnostic blocks concurrently. It records the `ramchoice` and replication Git
-commits, writes separate logs under `output/production-logs/`, waits for all
-three blocks, and then renders the production tables and figures. It does not
-copy, commit, or push generated files.
-
-Each design is checkpointed separately under `output/checkpoints/`. Reissuing
-the same command with the same design schema, replication count, critical-draw
-count, and `ramchoice` commit resumes completed designs instead of rerunning
-them. Thus an interrupted production run can be restarted with the same
-one-line command.
-
-For Princeton's Della cluster, the tracked [`della/`](della/) workflow submits
-the 80 designs as independent Slurm array tasks and renders results in a
-dependent assembly job. Start with [`della/README.md`](della/README.md); it
-contains the one-time setup, three-design smoke test, production submission,
-monitoring, and retrieval commands.
-
-For production runs, the block-level raw `.rds` file is a lightweight manifest
-that records metadata and the relative paths of its per-design raw
-checkpoints. The table and figure scripts read one design at a time, avoiding a
-single multi-million-row object in memory. Keep the manifest and checkpoint
-directory together when archiving raw results.
-
-The homogeneous-AOM simulation engine reproduces the seven menu-support
-designs, three menu-specific sample sizes, and four preference hypotheses
-reported in the supplemental appendix. Each AOM replication records the
-all-inequalities least-favorable (`LF`) procedure corresponding directly to
-Theorem 9 and its GMS refinement from the same Gaussian draws; the table
-renderer reports the two procedures separately. The H-LAO engine implements
-eleven heterogeneous-preference configurations at four sample sizes. H11
-preserves prefix consideration and attention overload while violating
-Sequential Path Independence. The separate diagnostic block implements
-calibrated null, local, and fixed
-alternatives for attention-overload and Block--Marschak restrictions.
-
-To inspect the complete planned Monte Carlo design without running simulations,
-use:
-
-```text
-Rscript CCMM_2026_wp--simuls.R --design-only
-```
-
-The generated design table includes the stable `array_task` index used by the
-Della job array. Cluster tasks may also select a design explicitly with
-`--design-id`, but both selectors are restricted to `--checkpoint-only` mode.
-The `--assemble-only` mode fails if any expected checkpoint is absent.
-
-To run the 25-replication homogeneous-AOM pilot with 200 critical-value draws,
-use:
-
-```text
-Rscript CCMM_2026_wp--simuls.R --pilot --block=homogeneous-aom
-```
-
-To run the 25-replication H-LAO pilot, use:
-
-```text
-Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao
-```
-
-To run the 25-replication H-LAO specification-diagnostic pilot, use:
-
-```text
-Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao-diagnostic
-```
-
-H-LAO output records plug-in reach and full-attention estimates, projection
-and studentized undivided-moment pairwise confidence sets,
-dependence-robust and no-SPI event intervals, population identified bounds,
-compatibility diagnostics, and runtime. Every sample is analyzed with both
-finite-sample Hoeffding bands and covariance-aware correlated-Gaussian bands;
-`--critical-draws` controls the Gaussian simulation. No-SPI event projections
-are evaluated in the targeted H01, H05, H07, and H11 configurations.
-General-event LPs are used for the four-alternative designs; the
-six-alternative sparse designs use the ranking-free pairwise procedure.
-
-The diagnostic block studies simultaneous attention-overload and
-Block--Marschak specification checks under a valid null and local or fixed
-violations. It compares finite-sample Hoeffding outer diagnostics,
-hybrid Gaussian/exact-binomial outer diagnostics, and direct delta-Gaussian
-diagnostics. The direct method is used in this regular complete-menu,
-positive-reach design; the outer methods remain available when regularity is
-weak.
-
-For a quick smoke run, the replication and critical-draw counts can be
-overridden explicitly:
-
-```text
-Rscript CCMM_2026_wp--simuls.R --pilot --block=hlao --replications=1 --critical-draws=100
-```
-
-Pilot output is written to
-`output/CCMM_2026_wp--raw-homogeneous-aom--pilot.rds`; production output omits
-the `--pilot` suffix. Raw output is local by default.
-
-Pilot tables and figures can be regenerated with:
-
-```text
-Rscript CCMM_2026_wp--tables.R --pilot
-Rscript CCMM_2026_wp--figures.R --pilot
-```
-
-Their filenames begin with `pilot_`; the paper-repository copy helper excludes
-these scratch artifacts. Production renderers create four LaTeX tables and two
-PDF figures without the prefix.
+- [`simuls/`](simuls/) contains Monte Carlo experiments, computational
+  benchmarks, rendering scripts, Della orchestration, and archived legacy
+  simulation baselines.
+- [`empapp/`](empapp/) contains code for the travel-mode empirical application.
+  The restricted subject-level data are not included.
 
 ## Software
 
-The replication uses the development version of the R package
-[`ramchoice`](https://github.com/mdcattaneo/ramchoice). The package is being
-expanded to implement the homogeneous- and heterogeneous-preference methods in
-the paper while preserving compatibility with the earlier JPE application.
+Both workflows use the development version of the R package
+[`ramchoice`](https://github.com/mdcattaneo/ramchoice). Install the package and
+all required dependencies in a persistent user R library before running this
+replication. The analysis scripts call public package interfaces only.
 
-## Legacy code
+## Simulations
 
-The `AOM/` and `HAOM/` directories contain earlier simulation code and results.
-They are retained as numerical and design baselines while the 2026 pipeline is
-developed.
+The current simulation pipeline has three entry points:
+
+```text
+Rscript simuls/CCMM_2026_wp--simuls.R
+Rscript simuls/CCMM_2026_wp--tables.R
+Rscript simuls/CCMM_2026_wp--figures.R
+```
+
+The simulation driver writes raw results to `simuls/output/`. The two rendering
+scripts read only those saved results and write paper-ready artifacts to
+`simuls/tables/` and `simuls/figures/`. Generated artifacts and raw output are
+local by default.
+
+To inspect the complete Monte Carlo design without running it:
+
+```text
+Rscript simuls/CCMM_2026_wp--simuls.R --design-only
+```
+
+For local Windows production runs, use:
+
+```text
+simuls\0000_run-production.cmd
+```
+
+The launcher runs the homogeneous AOM, H-LAO estimation and inference, and
+H-LAO diagnostic blocks concurrently. Designs are checkpointed separately, so
+an interrupted run can resume without overwriting completed production output.
+
+For Princeton's Della cluster, start with
+[`simuls/della/README.md`](simuls/della/README.md). The tracked Slurm workflow
+uses one array task per design and a dependent assembly job that creates the
+raw manifests, tables, and figures only after all requested tasks succeed.
+
+The folders [`simuls/legacy/AOM/`](simuls/legacy/AOM/) and
+[`simuls/legacy/HAOM/`](simuls/legacy/HAOM/) contain the earlier simulation
+code and outputs. They are retained as numerical and design baselines for the
+2026 pipeline.
+
+## Empirical Application
+
+The empirical workflow analyzes the travel-mode experiment of Wang and Zhu.
+It treats travel modes A--D as inside alternatives and the dominated Default as
+the outside option. The code constructs the complete-design and common-menu
+samples, estimates H-LAO preference objects, compares them with ex post
+rankings, and summarizes observed information acquisition.
+
+The subject-level workbook was shared under a temporary restriction and is not
+part of this repository. Until the data providers authorize redistribution,
+place an approved local copy outside Git and pass its path explicitly:
+
+```text
+Rscript empapp/CCMM_2026_wp--empapp.R --data="C:/path/to/data_clean.xlsx"
+Rscript empapp/CCMM_2026_wp--empapp-tables.R
+```
+
+The analysis script writes aggregate-only results to `empapp/output/`; the
+renderer writes LaTeX tables to `empapp/tables/`. Both directories and
+`empapp/data/` are ignored by Git. The workflow reports row-i.i.d. benchmarks
+and subject-clustered inference side by side. The clustered analysis estimates
+the joint covariance of all menu--outcome frequencies, uses cluster multiplier
+calibration, and propagates the resulting simultaneous region through the AOM
+and H-LAO procedures.
+
+## Paper Artifacts
+
+Paper-ready simulation tables and figures are copied from `simuls/tables/` and
+`simuls/figures/` into the paper repository. Aggregate empirical tables are
+copied from `empapp/tables/`; the restricted workbook and subject-level output
+never leave their approved local location.
 
 ## Reference
 

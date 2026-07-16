@@ -12,11 +12,12 @@ module purge
 module load R/4.5.1
 
 cd "$SLURM_SUBMIT_DIR"
-RAMCHOICE_REPO=${RAMCHOICE_REPO:-"$(dirname "$SLURM_SUBMIT_DIR")/ramchoice"}
+GIT_ROOT=$(git rev-parse --show-toplevel)
+RAMCHOICE_REPO=${RAMCHOICE_REPO:-"$(dirname "$GIT_ROOT")/ramchoice"}
 R_MINOR=$(Rscript --vanilla -e 'cat(paste(R.version$major, strsplit(R.version$minor, "\\.")[[1L]][1L], sep = "."))')
 export R_LIBS_USER=${R_LIBS_USER:-"$HOME/R/x86_64-pc-linux-gnu-library/$R_MINOR"}
 export RAMCHOICE_GIT_SHA=$(git -C "$RAMCHOICE_REPO" rev-parse HEAD)
-export REPLICATION_GIT_SHA=$(git rev-parse HEAD)
+export REPLICATION_GIT_SHA=$(git -C "$GIT_ROOT" rev-parse HEAD)
 
 IFS=',' read -r -a blocks <<< "${CCMM_BLOCKS:-homogeneous-aom,hlao,hlao-diagnostic}"
 for block in "${blocks[@]}"; do

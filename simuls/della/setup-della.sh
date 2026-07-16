@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-BASE_DIR=$(dirname "$REPO_ROOT")
+SIMULS_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+GIT_ROOT=$(git -C "$SIMULS_ROOT" rev-parse --show-toplevel)
+BASE_DIR=$(dirname "$GIT_ROOT")
 RAMCHOICE_REPO=${RAMCHOICE_REPO:-"$BASE_DIR/ramchoice"}
 RAMCHOICE_REF=${RAMCHOICE_REF:-7758cfebf7a51f7e9bad7213879a9edc597271eb}
 RAMCHOICE_REMOTE=${RAMCHOICE_REMOTE:-git@github.com:mdcattaneo/ramchoice.git}
@@ -20,16 +21,17 @@ git -C "$RAMCHOICE_REPO" checkout --detach "$RAMCHOICE_REF"
 
 R_MINOR=$(Rscript --vanilla -e 'cat(paste(R.version$major, strsplit(R.version$minor, "\\.")[[1L]][1L], sep = "."))')
 export R_LIBS_USER=${R_LIBS_USER:-"$HOME/R/x86_64-pc-linux-gnu-library/$R_MINOR"}
-mkdir -p "$R_LIBS_USER" "$REPO_ROOT/output/della-logs"
+mkdir -p "$R_LIBS_USER" "$SIMULS_ROOT/output/della-logs"
 
 Rscript --vanilla \
-  "$REPO_ROOT/della/setup-della.R" \
+  "$SIMULS_ROOT/della/setup-della.R" \
   "$RAMCHOICE_REPO/R/ramchoice" \
   "$R_LIBS_USER"
 
 Rscript --vanilla -e 'library(ramchoice); cat("ramchoice", as.character(packageVersion("ramchoice")), "is ready.\n")'
 
 printf 'Della setup complete.\n'
-printf 'Replication repository: %s\n' "$REPO_ROOT"
+printf 'Replication repository: %s\n' "$GIT_ROOT"
+printf 'Simulation workspace:   %s\n' "$SIMULS_ROOT"
 printf 'ramchoice repository:   %s\n' "$RAMCHOICE_REPO"
 printf 'Persistent R library:   %s\n' "$R_LIBS_USER"
