@@ -652,6 +652,27 @@ build_hlao_population <- function(design_row) {
   event <- apply(rankings, 1L, function(ranking) {
     match(universe_size, ranking) < match(1L, ranking)
   })
+  spi_certificate <- NULL
+  if (design_row$stopping_design == "menu-dependent") {
+    binary_index <- match("1-2", names(menus))
+    singleton_two <- match("2", names(menus))
+    recovered_first <- 1 - outside_prob[binary_index]
+    recovered_second <- recovered_first * (1 - outside_prob[singleton_two])
+    required_first_choice <- recovered_first - recovered_second
+    observed_first_choice <- prob[binary_index, 1L]
+    spi_certificate <- data.frame(
+      menu = "1-2",
+      true_second_reach = reach[[binary_index]][2L],
+      spi_second_reach = recovered_second,
+      required_first_choice = required_first_choice,
+      observed_first_choice = observed_first_choice,
+      violation = required_first_choice - observed_first_choice,
+      stringsAsFactors = FALSE
+    )
+    if (!is.finite(spi_certificate$violation) || spi_certificate$violation <= 0) {
+      stop("The H11 SPI misspecification certificate is not satisfied.", call. = FALSE)
+    }
+  }
   list(
     menu = menu,
     prob = prob,
@@ -663,7 +684,8 @@ build_hlao_population <- function(design_row) {
     tau = tau,
     event = event,
     event_name = paste0(universe_size, " above 1"),
-    event_truth = sum(tau[event])
+    event_truth = sum(tau[event]),
+    spi_certificate = spi_certificate
   )
 }
 

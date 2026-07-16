@@ -342,7 +342,7 @@ build_hlao_sensitivity_table <- function(object, pilot) {
     "\\end{tabular}",
     "}",
     "\\begin{minipage}{0.96\\textwidth}",
-    "\\footnotesize Notes: Population columns report the width of the sharp identified interval for the designated preference event. Sampling columns use covariance-aware Gaussian/exact probability bands. H07 violates preference--stopping independence; H11 violates Sequential Path Independence while preserving prefix consideration, attention overload, and a stable preference marginal. Dashes mark a misspecified model or an inapplicable coverage calculation.",
+    "\\footnotesize Notes: Population columns report the width of the sharp identified interval for the designated preference event. Sampling columns use hybrid Gaussian/exact-binomial probability bands. H07 violates preference--stopping independence; H11 violates Sequential Path Independence while preserving prefix consideration, attention overload, and a stable preference marginal. Dashes mark a misspecified model or an inapplicable coverage calculation.",
     "\\end{minipage}",
     "\\end{table}"
   )

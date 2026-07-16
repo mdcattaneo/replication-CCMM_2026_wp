@@ -108,7 +108,7 @@ six-alternative sparse designs use the ranking-free pairwise procedure.
 The diagnostic block studies simultaneous attention-overload and
 Block--Marschak specification checks under a valid null and local or fixed
 violations. It compares finite-sample Hoeffding outer diagnostics,
-covariance-aware Gaussian/exact outer diagnostics, and direct delta-Gaussian
+hybrid Gaussian/exact-binomial outer diagnostics, and direct delta-Gaussian
 diagnostics. The direct method is used in this regular complete-menu,
 positive-reach design; the outer methods remain available when regularity is
 weak.
