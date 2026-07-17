@@ -55,7 +55,7 @@ build_aom_design <- function() {
   )
   design <- merge(
     supports,
-    data.frame(n_per_menu = c(50L, 100L, 200L)),
+    data.frame(n_per_menu = c(50L, 100L, 200L, 500L)),
     all = TRUE
   )
   design <- design[order(design$support_id, design$n_per_menu), ]

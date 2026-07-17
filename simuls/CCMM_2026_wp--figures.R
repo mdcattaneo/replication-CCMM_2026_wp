@@ -58,87 +58,6 @@ figure_path <- function(filename, pilot) {
   file.path(figures_dir, paste0(prefix, filename))
 }
 
-plot_reach_performance <- function(object, pilot) {
-  summaries <- list()
-  summary_index <- 0L
-  for (design_index in seq_len(nrow(object$design))) {
-    design <- object$design[design_index, ]
-    data <- result_data(object, design$design_id)
-    data <- data[
-      data$estimand_type == "pairwise-share" & data$target_valid %in% TRUE,
-      ,
-      drop = FALSE
-    ]
-    data$method_group <- ifelse(
-      grepl("^studentized", data$method),
-      "Studentized",
-      ifelse(
-        grepl("hoeffding", data$method),
-        "Hoeffding",
-        "Correlated Gaussian"
-      )
-    )
-    for (method in c("Hoeffding", "Correlated Gaussian", "Studentized")) {
-      selected <- data[data$method_group == method, , drop = FALSE]
-      if (!nrow(selected)) next
-      summary_index <- summary_index + 1L
-      summaries[[summary_index]] <- data.frame(
-        design_id = design$design_id,
-        n_per_menu = design$n_per_menu,
-        reach_design = design$reach_design,
-        method_group = method,
-        coverage = mean_na(selected$covered),
-        width = mean_na(selected$width)
-      )
-    }
-  }
-  designs <- do.call(rbind, summaries)
-
-  path <- figure_path("CCMM_2026_wp--figure-hlao-reach.pdf", pilot)
-  grDevices::pdf(path, width = 11.4, height = 6.4, useDingbats = FALSE)
-  on.exit(grDevices::dev.off(), add = TRUE)
-  graphics::par(mfrow = c(2L, 3L), mar = c(4.2, 4.2, 2.2, 1.0), las = 1)
-  colors <- c(high = "#0072B2", low = "#D55E00", zero = "#009E73")
-  points <- c(high = 16L, low = 17L, zero = 15L)
-  sample_sizes <- sort(unique(designs$n_per_menu))
-
-  for (metric in c("coverage", "width")) {
-    for (method in c("Hoeffding", "Correlated Gaussian", "Studentized")) {
-      selected <- designs[designs$method_group == method, , drop = FALSE]
-      y <- selected[[metric]]
-      limits <- if (metric == "coverage") c(0.75, 1.01) else c(0, max(y, na.rm = TRUE) * 1.08)
-      graphics::plot(
-        sample_sizes, rep(NA_real_, length(sample_sizes)),
-        type = "n", ylim = limits, xlab = "Observations per menu",
-        ylab = if (metric == "coverage") "Coverage probability" else "Average interval width",
-        main = method
-      )
-      if (metric == "coverage") graphics::abline(h = 0.95, lty = 2L, col = "gray45")
-      for (reach in names(colors)) {
-        values <- vapply(sample_sizes, function(sample_size) {
-          mean_na(selected[[metric]][
-            selected$n_per_menu == sample_size & selected$reach_design == reach
-          ])
-        }, numeric(1L))
-        graphics::lines(
-          sample_sizes, values, type = "b", lwd = 1.6,
-          pch = points[[reach]], col = colors[[reach]]
-        )
-      }
-      if (metric == "coverage" && method == "Hoeffding") {
-        graphics::legend(
-          "bottomright", legend = c("High reach", "Low reach", "Zero reach"),
-          col = colors, pch = points, lty = 1L, bty = "n", cex = 0.82
-        )
-      }
-    }
-  }
-  grDevices::dev.off()
-  on.exit(NULL, add = FALSE)
-  message("Wrote figure: ", path)
-  invisible(path)
-}
-
 plot_runtime <- function(object, pilot) {
   configurations <- sprintf("H%02d", 1:10)
   methods <- c("Hoeffding", "Correlated Gaussian")
@@ -201,7 +120,6 @@ plot_runtime <- function(object, pilot) {
 main <- function() {
   pilot <- "--pilot" %in% commandArgs(trailingOnly = TRUE)
   object <- read_hlao(pilot)
-  plot_reach_performance(object, pilot)
   plot_runtime(object, pilot)
 }
 

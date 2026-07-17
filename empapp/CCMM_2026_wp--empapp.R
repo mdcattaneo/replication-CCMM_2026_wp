@@ -96,9 +96,15 @@ if (duplicate_id_task || unavailable_choices || click_mismatch) {
 
 support_count <- tapply(menu_key, ids, function(value) length(unique(value)))
 complete_subjects <- names(support_count[support_count == 16L])
+raw_reports <- unique(data.frame(id = ids, pre = as.character(data$pre)))
+dominance_consistent_report <- vapply(raw_reports$pre, function(value) {
+  all(vapply(modes, grepl, logical(1L), x = value, fixed = TRUE))
+}, logical(1L))
+dominance_consistent_ids <- raw_reports$id[dominance_consistent_report]
 complete_rows <- ids %in% complete_subjects & rowSums(menu) > 0L
-pooled_rows <- rowSums(menu) > 0L
-common_rows <- rowSums(menu) >= 2L
+dominance_consistent_rows <-
+  ids %in% dominance_consistent_ids & rowSums(menu) > 0L
+common_rows <- ids %in% dominance_consistent_ids & rowSums(menu) >= 2L
 
 population_fit <- function(rows, dependence) {
   keys <- unique(menu_key[rows])
@@ -123,7 +129,7 @@ population_fit <- function(rows, dependence) {
 }
 
 complete_fit <- population_fit(complete_rows, "all")
-pooled_fit <- population_fit(pooled_rows, "all")
+dominance_consistent_fit <- population_fit(dominance_consistent_rows, "all")
 common_fit <- population_fit(common_rows, "noPI")
 
 rankings <- ramchoice::hlaoRankings(seq_along(modes))
@@ -155,8 +161,10 @@ run_hlao_test <- function(rows, clustered, draw_seed) {
 
 complete_hlao_iid <- run_hlao_test(complete_rows, FALSE, seed + 1L)
 complete_hlao_cluster <- run_hlao_test(complete_rows, TRUE, seed + 2L)
-pooled_hlao_iid <- run_hlao_test(pooled_rows, FALSE, seed + 3L)
-pooled_hlao_cluster <- run_hlao_test(pooled_rows, TRUE, seed + 4L)
+dominance_consistent_hlao_iid <-
+  run_hlao_test(dominance_consistent_rows, FALSE, seed + 3L)
+dominance_consistent_hlao_cluster <-
+  run_hlao_test(dominance_consistent_rows, TRUE, seed + 4L)
 
 set.seed(seed + 5L)
 common_hlao_iid <- ramchoice::hlaoNoPITest(
@@ -200,15 +208,13 @@ run_aom_test <- function(rows, clustered, draw_seed) {
 
 complete_aom_iid <- run_aom_test(ids %in% complete_subjects, FALSE, seed + 7L)
 complete_aom_cluster <- run_aom_test(ids %in% complete_subjects, TRUE, seed + 8L)
-pooled_aom_iid <- run_aom_test(rep(TRUE, n), FALSE, seed + 9L)
-pooled_aom_cluster <- run_aom_test(rep(TRUE, n), TRUE, seed + 10L)
-
-raw_reports <- unique(data.frame(id = ids, pre = as.character(data$pre)))
-ram_rational_report <- vapply(raw_reports$pre, function(value) {
-  all(vapply(modes, grepl, logical(1L), x = value, fixed = TRUE))
-}, logical(1L))
-ram_rational_ids <- raw_reports$id[ram_rational_report]
-ram_rational_strings <- unique(raw_reports$pre[ram_rational_report])
+dominance_consistent_aom_iid <- run_aom_test(
+  ids %in% dominance_consistent_ids, FALSE, seed + 17L
+)
+dominance_consistent_aom_cluster <- run_aom_test(
+  ids %in% dominance_consistent_ids, TRUE, seed + 18L
+)
+ram_rational_strings <- unique(raw_reports$pre[dominance_consistent_report])
 ram_rational_preferences <- t(vapply(ram_rational_strings, function(value) {
   match(strsplit(value, "", fixed = TRUE)[[1L]], modes)
 }, integer(length(modes))))
@@ -241,15 +247,10 @@ run_ram_test <- function(rows, clustered, draw_seed) {
     cluster = if (clustered) ids[rows] else NULL
   )
 }
-ram_rows <- ids %in% ram_rational_ids
-ram_iid <- run_ram_test(ram_rows, FALSE, seed + 15L)
-ram_cluster <- run_ram_test(ram_rows, TRUE, seed + 16L)
+ram_iid <- run_ram_test(ids %in% dominance_consistent_ids, FALSE, seed + 15L)
+ram_cluster <- run_ram_test(ids %in% dominance_consistent_ids, TRUE, seed + 16L)
 
-reported <- unique(data.frame(id = ids, pre = as.character(data$pre)))
-rational_report <- vapply(reported$pre, function(value) {
-  all(vapply(modes, grepl, logical(1L), x = value, fixed = TRUE))
-}, logical(1L))
-reported <- reported[rational_report, , drop = FALSE]
+reported <- raw_reports[dominance_consistent_report, , drop = FALSE]
 
 pairwise_validation <- function(fit, report_ids) {
   pairwise <- fit$pairwise
@@ -274,9 +275,48 @@ pairwise_validation <- function(fit, report_ids) {
 }
 
 complete_validation <- pairwise_validation(complete_fit, complete_subjects)
-pooled_validation <- pairwise_validation(pooled_fit, unique(ids))
+dominance_consistent_validation <- pairwise_validation(
+  dominance_consistent_fit,
+  dominance_consistent_ids
+)
 
-pairwise_inference <- function(iid_fit, cluster_fit, report_ids, draw_seed) {
+simultaneous_difference_band <- function(scores, estimate, draw_seed) {
+  standard_error <- sqrt(colSums(scores^2))
+  set.seed(draw_seed)
+  weights <- matrix(
+    stats::rnorm(n_draws * nrow(scores)),
+    nrow = n_draws,
+    ncol = nrow(scores)
+  )
+  draws <- weights %*% scores
+  active <- standard_error > sqrt(.Machine$double.eps)
+  standardized <- matrix(0, nrow = n_draws, ncol = ncol(scores))
+  standardized[, active] <- sweep(
+    draws[, active, drop = FALSE],
+    2L,
+    standard_error[active],
+    "/"
+  )
+  critical_value <- as.numeric(stats::quantile(
+    apply(abs(standardized), 1L, max),
+    1 - alpha,
+    names = FALSE,
+    type = 8
+  ))
+  lower <- estimate - critical_value * standard_error
+  upper <- estimate + critical_value * standard_error
+  list(
+    standard_error = standard_error,
+    critical_value = critical_value,
+    lower = lower,
+    upper = upper,
+    reject = lower > 0 | upper < 0
+  )
+}
+
+pairwise_inference <- function(
+  iid_fit, cluster_fit, analysis_rows, report_ids, draw_seed
+) {
   iid <- iid_fit$pairwise_studentized
   clustered <- cluster_fit$pairwise_studentized
   result <- data.frame(
@@ -308,9 +348,82 @@ pairwise_inference <- function(iid_fit, cluster_fit, report_ids, draw_seed) {
   result$difference <- result$estimate - result$reported_share
   result$reported_subjects <- nrow(reports)
 
+  iid_summary <- iid_fit$summary
+  analysis_menu <- menu[analysis_rows, , drop = FALSE]
+  analysis_choice <- choice[analysis_rows, , drop = FALSE]
+  analysis_outside <- outside[analysis_rows]
+  n_choice <- nrow(analysis_menu)
+  n_report <- nrow(reports)
+  if (n_choice < 2L || n_report < 2L) {
+    stop("Pairwise difference inference requires at least two observations.")
+  }
+  iid_difference_scores <- matrix(
+    0,
+    nrow = n_choice + n_report,
+    ncol = nrow(result)
+  )
+  for (index in seq_len(nrow(result))) {
+    menu_id <- iid$menu_id[index]
+    later <- result$later[index]
+    singleton_id <- which(
+      rowSums(iid_summary$menu) == 1L & iid_summary$menu[, later] == 1L
+    )
+    binary_rows <- rowSums(
+      analysis_menu != matrix(
+        iid_summary$menu[menu_id, ],
+        nrow = n_choice,
+        ncol = ncol(analysis_menu),
+        byrow = TRUE
+      )
+    ) == 0L
+    singleton_rows <- rowSums(
+      analysis_menu != matrix(
+        iid_summary$menu[singleton_id, ],
+        nrow = n_choice,
+        ncol = ncol(analysis_menu),
+        byrow = TRUE
+      )
+    ) == 0L
+    y <- iid_summary$prob[menu_id, later]
+    e_ab <- iid_summary$outside_prob[menu_id]
+    e_b <- iid_summary$outside_prob[singleton_id]
+    reach <- (1 - e_ab) * (1 - e_b)
+    gradient <- c(
+      1 / reach,
+      y * (1 - e_b) / reach^2,
+      y * (1 - e_ab) / reach^2
+    )
+    model_score <- numeric(n_choice)
+    model_score[binary_rows] <-
+      (analysis_choice[binary_rows, later] - y) /
+        sum(binary_rows) * gradient[1L] +
+      (analysis_outside[binary_rows] - e_ab) /
+        sum(binary_rows) * gradient[2L]
+    model_score[singleton_rows] <- model_score[singleton_rows] +
+      (analysis_outside[singleton_rows] - e_b) /
+        sum(singleton_rows) * gradient[3L]
+    report_indicator <- vapply(
+      reports$pre,
+      function(preference) {
+        regexpr(result$later_mode[index], preference, fixed = TRUE) <
+          regexpr(result$earlier_mode[index], preference, fixed = TRUE)
+      },
+      logical(1L)
+    )
+    report_score <- (report_indicator - result$reported_share[index]) / n_report
+    iid_difference_scores[, index] <- c(
+      model_score * sqrt(n_choice / (n_choice - 1L)),
+      -report_score * sqrt(n_report / (n_report - 1L))
+    )
+  }
+
   summary <- cluster_fit$summary
   n_cluster <- summary$n_cluster
-  difference_scores <- matrix(0, nrow = n_cluster, ncol = nrow(result))
+  cluster_difference_scores <- matrix(
+    0,
+    nrow = n_cluster,
+    ncol = nrow(result)
+  )
   for (index in seq_len(nrow(result))) {
     menu_id <- clustered$menu_id[index]
     later <- result$later[index]
@@ -349,50 +462,48 @@ pairwise_inference <- function(iid_fit, cluster_fit, report_ids, draw_seed) {
     report_score[observed_report] <- (
       report_indicator[observed_report] - result$reported_share[index]
     ) / nrow(reports)
-    difference_scores[, index] <- model_score - report_score
+    cluster_difference_scores[, index] <- model_score - report_score
   }
-  difference_se <- sqrt(
-    n_cluster / (n_cluster - 1L) * colSums(difference_scores^2)
+  cluster_difference_scores <- cluster_difference_scores * sqrt(
+    n_cluster / (n_cluster - 1L)
   )
-  set.seed(draw_seed)
-  weights <- matrix(
-    stats::rnorm(n_draws * n_cluster),
-    nrow = n_draws,
-    ncol = n_cluster
+  iid_band <- simultaneous_difference_band(
+    iid_difference_scores,
+    result$difference,
+    draw_seed + 100L
   )
-  draws <- weights %*% difference_scores * sqrt(n_cluster / (n_cluster - 1L))
-  active <- difference_se > sqrt(.Machine$double.eps)
-  standardized <- matrix(0, nrow = n_draws, ncol = nrow(result))
-  standardized[, active] <- sweep(
-    draws[, active, drop = FALSE],
-    2L,
-    difference_se[active],
-    "/"
+  cluster_band <- simultaneous_difference_band(
+    cluster_difference_scores,
+    result$difference,
+    draw_seed
   )
-  critical_value <- as.numeric(stats::quantile(
-    apply(abs(standardized), 1L, max),
-    1 - alpha,
-    names = FALSE,
-    type = 8
-  ))
-  result$difference_se <- difference_se
-  result$difference_lower <- result$difference - critical_value * difference_se
-  result$difference_upper <- result$difference + critical_value * difference_se
-  result$difference_reject <- result$difference_lower > 0 |
-    result$difference_upper < 0
+  for (field in c("standard_error", "lower", "upper", "reject")) {
+    result[[paste0("iid_difference_", field)]] <- iid_band[[field]]
+    result[[paste0("cluster_difference_", field)]] <- cluster_band[[field]]
+  }
+  result$iid_difference_critical_value <- iid_band$critical_value
+  result$cluster_difference_critical_value <- cluster_band$critical_value
+
+  # Preserve the previous field names as clustered-inference aliases.
+  result$difference_se <- cluster_band$standard_error
+  result$difference_lower <- cluster_band$lower
+  result$difference_upper <- cluster_band$upper
+  result$difference_reject <- cluster_band$reject
   result
 }
 
 complete_pairwise_inference <- pairwise_inference(
   complete_hlao_iid,
   complete_hlao_cluster,
+  complete_rows,
   complete_subjects,
   seed + 11L
 )
-pooled_pairwise_inference <- pairwise_inference(
-  pooled_hlao_iid,
-  pooled_hlao_cluster,
-  unique(ids),
+dominance_consistent_pairwise_inference <- pairwise_inference(
+  dominance_consistent_hlao_iid,
+  dominance_consistent_hlao_cluster,
+  dominance_consistent_rows,
+  dominance_consistent_ids,
   seed + 12L
 )
 
@@ -411,7 +522,7 @@ descriptives <- do.call(rbind, descriptive_rows)
 search_rows <- list()
 search_index <- 0L
 for (label in unique(menu_label)) {
-  label_rows <- menu_label == label
+  label_rows <- ids %in% dominance_consistent_ids & menu_label == label
   for (mode in modes) {
     mode_index <- match(mode, modes)
     selected <- label_rows & menu[, mode_index] == 1L
@@ -464,7 +575,8 @@ search_comparisons <- do.call(rbind, comparison_rows)
 
 search_rate_score <- function(label, mode, proxy) {
   mode_index <- match(mode, modes)
-  selected <- menu_label == label & menu[, mode_index] == 1L
+  selected <- ids %in% dominance_consistent_ids & menu_label == label &
+    menu[, mode_index] == 1L
   inspected <-
     as.numeric(data[[paste0("time_", mode, "_checked")]]) > 0 |
     as.numeric(data[[paste0("price_", mode, "_checked")]]) > 0
@@ -497,8 +609,8 @@ search_score_matrix <- function(proxy) {
   scores
 }
 
-simultaneous_score_intervals <- function(estimates, row_scores, draw_seed) {
-  cluster_index <- match(ids, unique(ids))
+simultaneous_score_intervals <- function(estimates, row_scores, row_ids, draw_seed) {
+  cluster_index <- match(row_ids, unique(row_ids))
   cluster_scores <- rowsum(row_scores, cluster_index, reorder = FALSE)
   score_sets <- list(iid = row_scores, cluster = cluster_scores)
   result <- list()
@@ -538,16 +650,22 @@ simultaneous_score_intervals <- function(estimates, row_scores, draw_seed) {
   result
 }
 
-inspected_scores <- search_score_matrix("inspected")
-inspected_or_chosen_scores <- search_score_matrix("inspected_or_chosen")
+inspected_scores <-
+  search_score_matrix("inspected")[dominance_consistent_rows, , drop = FALSE]
+inspected_or_chosen_scores <-
+  search_score_matrix("inspected_or_chosen")[
+    dominance_consistent_rows, , drop = FALSE
+  ]
 inspected_intervals <- simultaneous_score_intervals(
   search_comparisons$inspected_difference,
   inspected_scores,
+  ids[dominance_consistent_rows],
   seed + 13L
 )
 inspected_or_chosen_intervals <- simultaneous_score_intervals(
   search_comparisons$inspected_or_chosen_difference,
   inspected_or_chosen_scores,
+  ids[dominance_consistent_rows],
   seed + 14L
 )
 for (sampling in c("iid", "cluster")) {
@@ -569,9 +687,19 @@ collect_aom <- function(fit, sample_name, sampling) {
 aom_inference <- rbind(
   collect_aom(complete_aom_iid, "complete", "iid"),
   collect_aom(complete_aom_cluster, "complete", "cluster"),
-  collect_aom(pooled_aom_iid, "pooled", "iid"),
-  collect_aom(pooled_aom_cluster, "pooled", "cluster")
+  collect_aom(
+    dominance_consistent_aom_iid, "dominance-consistent", "iid"
+  ),
+  collect_aom(
+    dominance_consistent_aom_cluster, "dominance-consistent", "cluster"
+  )
 )
+aom_ranking_key <- apply(aom_preferences, 1L, paste, collapse = "-")
+reported_rational_key <- apply(
+  ram_rational_preferences, 1L, paste, collapse = "-"
+)
+aom_inference$reported_rational <-
+  aom_ranking_key[aom_inference$preference_id] %in% reported_rational_key
 
 collect_ram <- function(fit, sampling) {
   result <- fit$results
@@ -595,8 +723,12 @@ collect_specification <- function(fit, sample_name, sampling) {
 hlao_specification <- rbind(
   collect_specification(complete_hlao_iid, "complete", "iid"),
   collect_specification(complete_hlao_cluster, "complete", "cluster"),
-  collect_specification(pooled_hlao_iid, "pooled", "iid"),
-  collect_specification(pooled_hlao_cluster, "pooled", "cluster")
+  collect_specification(
+    dominance_consistent_hlao_iid, "dominance-consistent", "iid"
+  ),
+  collect_specification(
+    dominance_consistent_hlao_cluster, "dominance-consistent", "cluster"
+  )
 )
 
 collect_common_intervals <- function(fit, sampling) {
@@ -619,7 +751,8 @@ results <- list(
     n_draws = n_draws,
     seed = seed,
     inference_status = paste(
-      "Complete: row-i.i.d. benchmarks and subject-clustered",
+      "Complete and dominance-consistent samples: row-i.i.d. benchmarks",
+      "and subject-clustered",
       "covariance/multiplier inference."
     )
   ),
@@ -634,6 +767,7 @@ results <- list(
     tasks = length(unique(tasks)),
     observed_menus = length(unique(menu_key)),
     complete_design_subjects = length(complete_subjects),
+    dominance_consistent_subjects = length(dominance_consistent_ids),
     rational_reports = nrow(reported)
   ),
   descriptives = descriptives,
@@ -647,17 +781,22 @@ results <- list(
     pairwise_validation = complete_validation,
     pairwise_inference = complete_pairwise_inference
   ),
-  pooled = list(
-    fit = pooled_fit,
-    iid_inference = list(aom = pooled_aom_iid, hlao = pooled_hlao_iid),
-    cluster_inference = list(
-      aom = pooled_aom_cluster,
-      hlao = pooled_hlao_cluster
+  dominance_consistent = list(
+    subjects = dominance_consistent_ids,
+    fit = dominance_consistent_fit,
+    iid_inference = list(
+      aom = dominance_consistent_aom_iid,
+      hlao = dominance_consistent_hlao_iid
     ),
-    pairwise_validation = pooled_validation,
-    pairwise_inference = pooled_pairwise_inference
+    cluster_inference = list(
+      aom = dominance_consistent_aom_cluster,
+      hlao = dominance_consistent_hlao_cluster
+    ),
+    pairwise_validation = dominance_consistent_validation,
+    pairwise_inference = dominance_consistent_pairwise_inference
   ),
   common_menu = list(
+    subjects = dominance_consistent_ids,
     fit = common_fit,
     iid_inference = common_hlao_iid,
     cluster_inference = common_hlao_cluster,
@@ -667,6 +806,7 @@ results <- list(
   aom_inference = aom_inference,
   hlao_specification = hlao_specification,
   search = list(
+    subjects = dominance_consistent_ids,
     rates = search_rates,
     comparisons = search_comparisons,
     inspected_critical_values = vapply(
@@ -696,8 +836,11 @@ utils::write.csv(
   row.names = FALSE
 )
 utils::write.csv(
-  pooled_validation,
-  file.path(output_dir, "CCMM_2026_wp--empapp-pairwise-pooled.csv"),
+  dominance_consistent_validation,
+  file.path(
+    output_dir,
+    "CCMM_2026_wp--empapp-pairwise-dominance-consistent.csv"
+  ),
   row.names = FALSE
 )
 utils::write.csv(
@@ -711,8 +854,11 @@ utils::write.csv(
   row.names = FALSE
 )
 utils::write.csv(
-  pooled_pairwise_inference,
-  file.path(output_dir, "CCMM_2026_wp--empapp-pairwise-inference-pooled.csv"),
+  dominance_consistent_pairwise_inference,
+  file.path(
+    output_dir,
+    "CCMM_2026_wp--empapp-pairwise-inference-dominance-consistent.csv"
+  ),
   row.names = FALSE
 )
 utils::write.csv(

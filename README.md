@@ -84,9 +84,10 @@ used in the Monte Carlo experiments.
 
 The empirical workflow analyzes the travel-mode experiment of Wang and Zhu.
 It treats travel modes A--D as inside alternatives and the dominated Default as
-the outside option. The code constructs the complete-design and common-menu
-samples, estimates H-LAO preference objects, compares them with ex post
-rankings, and summarizes observed information acquisition.
+the outside option. The code uses the 21-subject complete-design cohort and the
+37-subject dominance-consistent sample retained in the original RAM analysis,
+estimates H-LAO preference objects, compares them with ex post rankings, and
+summarizes observed information acquisition.
 
 The subject-level workbook was shared under a temporary restriction and is not
 part of this repository. Until the data providers authorize redistribution,

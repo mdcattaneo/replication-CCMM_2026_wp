@@ -57,50 +57,63 @@ format_interval <- function(lower, upper) {
   )
 }
 
-write_pairwise_inference <- function(data, sample_label, filename) {
-  lines <- c(
-    "\\begin{tabular}{lccccc}",
-    "\\toprule",
-    paste0(
-      "Preference event & H-LAO & Row-i.i.d. CI & Clustered CI & ",
-      "Reported & Difference CI \\\\"
-    ),
-    "\\midrule",
-    vapply(seq_len(nrow(data)), function(index) {
-      sprintf(
-        "$%s\\succ %s$ & %.3f & %s & %s & %.3f & %s \\\\ ",
-        data$later_mode[index],
-        data$earlier_mode[index],
-        data$estimate[index],
-        format_interval(data$iid_lower[index], data$iid_upper[index]),
-        format_interval(data$cluster_lower[index], data$cluster_upper[index]),
-        data$reported_share[index],
-        format_interval(data$difference_lower[index], data$difference_upper[index])
+pairwise_rows <- function(data) {
+  vapply(seq_len(nrow(data)), function(index) {
+    sprintf(
+      "& $%s\\succ %s$ & %.3f & %.3f & %s & %s & %s & %s \\\\",
+      data$later_mode[index],
+      data$earlier_mode[index],
+      data$estimate[index],
+      data$reported_share[index],
+      format_interval(data$iid_lower[index], data$iid_upper[index]),
+      format_interval(
+        data$iid_difference_lower[index],
+        data$iid_difference_upper[index]
+      ),
+      format_interval(data$cluster_lower[index], data$cluster_upper[index]),
+      format_interval(
+        data$cluster_difference_lower[index],
+        data$cluster_difference_upper[index]
       )
-    }, character(1L)),
-    "\\bottomrule",
-    "\\end{tabular}",
-    paste0("% Sample: ", sample_label)
-  )
-  writeLines(lines, file.path(tables_dir, filename))
+    )
+  }, character(1L))
 }
 
-write_pairwise_inference(
-  results$complete_design$pairwise_inference,
-  "complete-design cohort",
-  "CCMM_2026_wp--table-empapp-pairwise-inference-complete.tex"
+pairwise_lines <- c(
+  "\\begin{tabular}{clcccccc}",
+  "\\toprule",
+  paste0(
+    "& & \\multicolumn{2}{c}{Point estimates} & ",
+    "\\multicolumn{2}{c}{Row-i.i.d.} & ",
+    "\\multicolumn{2}{c}{Clustered} \\\\"
+  ),
+  "\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}\\cmidrule(lr){7-8}",
+  paste0(
+    "& & H-LAO & Reported & H-LAO CI & Difference CI & ",
+    "H-LAO CI & Difference CI \\\\"
+  ),
+  "\\midrule",
+  "\\multicolumn{8}{l}{\\textit{Complete sample}} \\\\",
+  pairwise_rows(results$complete_design$pairwise_inference),
+  "\\addlinespace",
+  "\\multicolumn{8}{l}{\\textit{Dominance-consistent sample}} \\\\",
+  pairwise_rows(results$dominance_consistent$pairwise_inference),
+  "\\bottomrule",
+  "\\end{tabular}"
 )
-write_pairwise_inference(
-  results$pooled$pairwise_inference,
-  "pooled subjects",
-  "CCMM_2026_wp--table-empapp-pairwise-inference-pooled.tex"
+writeLines(
+  pairwise_lines,
+  file.path(
+    tables_dir,
+    "CCMM_2026_wp--table-empapp-pairwise-inference.tex"
+  )
 )
 
 ram <- results$ram_inference
 ram_rows <- list()
 ram_index <- 0L
-for (sampling in c("iid", "cluster")) {
-  for (ranking_group in c("reported-rational", "reported-irrational")) {
+for (ranking_group in c("reported-rational", "reported-irrational")) {
+  for (sampling in c("iid", "cluster")) {
     selected <- ram$sampling == sampling & ram$ranking_group == ranking_group
     gms <- ram[selected & ram$method == "GMS", , drop = FALSE]
     lf <- ram[selected & ram$method == "LF", , drop = FALSE]
@@ -120,23 +133,28 @@ ram_lines <- c(
   "\\begin{tabular}{llcccc}",
   "\\toprule",
   paste0(
-    "Sampling & Ranking group & GMS nonrejected & Min. GMS $p$ & ",
-    "LF nonrejected & Min. LF $p$ \\\\"
+    "& & \\multicolumn{2}{c}{LF} & ",
+    "\\multicolumn{2}{c}{GMS} \\\\"
+  ),
+  "\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}",
+  paste0(
+    "Candidate rankings & Sampling & Nonrejected & Min. $p$-value & ",
+    "Nonrejected & Min. $p$-value \\\\"
   ),
   "\\midrule",
   vapply(seq_len(nrow(ram_summary)), function(index) {
     sprintf(
-      "%s & %s & %d & %.3f & %d & %.3f \\\\ ",
-      if (ram_summary$sampling[index] == "iid") "Row-i.i.d." else "Clustered",
+      "%s & %s & %d & %.3f & %d & %.3f \\\\",
       if (ram_summary$ranking_group[index] == "reported-rational") {
-        "Nine rational reports"
+        "Nine rational"
       } else {
-        "Two irrational reports"
+        "Two irrational"
       },
-      ram_summary$gms_nonrejected[index],
-      ram_summary$gms_min_p[index],
+      if (ram_summary$sampling[index] == "iid") "Row-i.i.d." else "Clustered",
       ram_summary$lf_nonrejected[index],
-      ram_summary$lf_min_p[index]
+      ram_summary$lf_min_p[index],
+      ram_summary$gms_nonrejected[index],
+      ram_summary$gms_min_p[index]
     )
   }, character(1L)),
   "\\bottomrule",
@@ -150,7 +168,7 @@ writeLines(
 aom <- results$aom_inference
 aom_rows <- list()
 aom_index <- 0L
-for (sample_name in c("complete", "pooled")) {
+for (sample_name in c("complete", "dominance-consistent")) {
   for (sampling in c("iid", "cluster")) {
     gms <- aom[
       aom$sample == sample_name & aom$sampling == sampling &
@@ -177,17 +195,26 @@ aom_summary <- do.call(rbind, aom_rows)
 aom_lines <- c(
   "\\begin{tabular}{llcccc}",
   "\\toprule",
-  "Sample & Sampling & GMS nonrejected & Min. GMS $p$ & LF nonrejected & Min. LF $p$ \\\\ ",
+  "& & \\multicolumn{2}{c}{LF} & \\multicolumn{2}{c}{GMS} \\\\",
+  "\\cmidrule(lr){3-4}\\cmidrule(lr){5-6}",
+  paste0(
+    "Sample & Sampling & Nonrejected & Min. $p$-value & ",
+    "Nonrejected & Min. $p$-value \\\\"
+  ),
   "\\midrule",
   vapply(seq_len(nrow(aom_summary)), function(index) {
     sprintf(
-      "%s & %s & %d & %.3f & %d & %.3f \\\\ ",
-      if (aom_summary$sample[index] == "complete") "Complete" else "Pooled",
+      "%s & %s & %d & %.3f & %d & %.3f \\\\",
+      if (aom_summary$sample[index] == "complete") {
+        "Complete"
+      } else {
+        "Dominance-consistent"
+      },
       if (aom_summary$sampling[index] == "iid") "Row-i.i.d." else "Clustered",
-      aom_summary$gms_nonrejected[index],
-      aom_summary$gms_min_p[index],
       aom_summary$lf_nonrejected[index],
-      aom_summary$lf_min_p[index]
+      aom_summary$lf_min_p[index],
+      aom_summary$gms_nonrejected[index],
+      aom_summary$gms_min_p[index]
     )
   }, character(1L)),
   "\\bottomrule",
@@ -209,12 +236,17 @@ specification_lines <- c(
   "\\begin{tabular}{llccccc}",
   "\\toprule",
   paste0(
-    "Sample & Restriction & Max. discrepancy & Row-i.i.d. lower & ",
-    "Clustered lower & I.i.d. reject & Cluster reject \\\\"
+    "& & & \\multicolumn{2}{c}{Row-i.i.d.} & ",
+    "\\multicolumn{2}{c}{Clustered} \\\\"
+  ),
+  "\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}",
+  paste0(
+    "Sample & Restriction & Max. discrepancy & Lower & $p$-value & ",
+    "Lower & $p$-value \\\\"
   ),
   "\\midrule"
 )
-for (sample_name in c("complete", "pooled")) {
+for (sample_name in c("complete", "dominance-consistent")) {
   for (restriction in c("attention-overload", "block-marschak", "omnibus")) {
     iid <- specification[
       specification$sample == sample_name & specification$sampling == "iid" &
@@ -230,8 +262,8 @@ for (sample_name in c("complete", "pooled")) {
     specification_lines <- c(
       specification_lines,
       sprintf(
-        "%s & %s & %.3f & %.3f & %.3f & %s & %s \\\\ ",
-        if (sample_name == "complete") "Complete" else "Pooled",
+        "%s & %s & %.3f & %.3f & %.3f & %.3f & %.3f \\\\",
+        if (sample_name == "complete") "Complete" else "Dominance-consistent",
         switch(
           restriction,
           `attention-overload` = "Attention overload",
@@ -240,9 +272,9 @@ for (sample_name in c("complete", "pooled")) {
         ),
         iid$max_violation_estimate,
         iid$max_violation_lower,
+        iid$p_value,
         clustered$max_violation_lower,
-        if (iid$reject) "Yes" else "No",
-        if (clustered$reject) "Yes" else "No"
+        clustered$p_value
       )
     )
   }
@@ -264,15 +296,21 @@ cluster_common <- cluster_common[
   match(iid_common$event, cluster_common$event),
   , drop = FALSE
 ]
+format_preference_event <- function(event) {
+  alternatives <- strsplit(event, " above ", fixed = TRUE)[[1L]]
+  sprintf("$%s \\succ %s$", alternatives[1L], alternatives[2L])
+}
 common_lines <- c(
   "\\begin{tabular}{lcc}",
   "\\toprule",
-  "Preference event & Row-i.i.d. bounds & Clustered bounds \\\\ ",
+  " & \\multicolumn{2}{c}{95\\% outer confidence bounds} \\\\",
+  "\\cmidrule(lr){2-3}",
+  "Preference event & Row-i.i.d. & Subject-clustered \\\\",
   "\\midrule",
   vapply(seq_len(nrow(iid_common)), function(index) {
     sprintf(
-      "%s & %s & %s \\\\ ",
-      iid_common$event[index],
+      "%s & %s & %s \\\\",
+      format_preference_event(iid_common$event[index]),
       format_interval(iid_common$lower[index], iid_common$upper[index]),
       format_interval(cluster_common$lower[index], cluster_common$upper[index])
     )
@@ -290,10 +328,13 @@ search_summary <- function(prefix, label) {
   estimate <- search[[paste0(prefix, "_difference")]]
   data.frame(
     proxy = label,
-    violations = sum(estimate > 0),
-    maximum = max(estimate),
-    iid_significant = sum(search[[paste0(prefix, "_iid_lower")]] > 0),
-    cluster_significant = sum(search[[paste0(prefix, "_cluster_lower")]] > 0)
+    mean = mean(estimate),
+    negative = sum(estimate < 0),
+    positive = sum(estimate > 0),
+    iid_negative = sum(search[[paste0(prefix, "_iid_upper")]] < 0),
+    iid_positive = sum(search[[paste0(prefix, "_iid_lower")]] > 0),
+    cluster_negative = sum(search[[paste0(prefix, "_cluster_upper")]] < 0),
+    cluster_positive = sum(search[[paste0(prefix, "_cluster_lower")]] > 0)
   )
 }
 search_table <- rbind(
@@ -301,18 +342,23 @@ search_table <- rbind(
   search_summary("inspected_or_chosen", "Displayed or chosen")
 )
 search_lines <- c(
-  "\\begin{tabular}{lcccc}",
+  "\\begin{tabular}{lrrrcccc}",
   "\\toprule",
-  "Attention proxy & Positive differences & Maximum & I.i.d. significant & Cluster significant \\\\ ",
+  " & \\multicolumn{3}{c}{Differences} & \\multicolumn{2}{c}{Row-i.i.d.} & \\multicolumn{2}{c}{Clustered} \\\\",
+  "\\cmidrule(lr){2-4} \\cmidrule(lr){5-6} \\cmidrule(lr){7-8}",
+  "Attention proxy & Mean & Negative & Positive & Sig. negative & Sig. positive & Sig. negative & Sig. positive \\\\",
   "\\midrule",
   vapply(seq_len(nrow(search_table)), function(index) {
     sprintf(
-      "%s & %d & %.3f & %d & %d \\\\ ",
+      "%s & %.3f & %d & %d & %d & %d & %d & %d \\\\",
       search_table$proxy[index],
-      search_table$violations[index],
-      search_table$maximum[index],
-      search_table$iid_significant[index],
-      search_table$cluster_significant[index]
+      search_table$mean[index],
+      search_table$negative[index],
+      search_table$positive[index],
+      search_table$iid_negative[index],
+      search_table$iid_positive[index],
+      search_table$cluster_negative[index],
+      search_table$cluster_positive[index]
     )
   }, character(1L)),
   "\\bottomrule",

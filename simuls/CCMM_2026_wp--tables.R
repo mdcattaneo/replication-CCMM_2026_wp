@@ -115,7 +115,7 @@ build_aom_table <- function(object, pilot) {
   )
   rows <- character(0L)
   for (support in support_order) {
-    for (sample_size in c(50L, 100L, 200L)) {
+    for (sample_size in c(50L, 100L, 200L, 500L)) {
       selected <- data[
         data$menu_support == support & data$n_per_menu == sample_size,
         ,
@@ -147,7 +147,7 @@ build_aom_table <- function(object, pilot) {
         " \\\\"
       ))
     }
-    rows <- c(rows, "\\addlinespace[2pt]")
+    rows <- c(rows, "\\cdashline{1-11}")
   }
   rows <- rows[-length(rows)]
   lines <- c(
@@ -160,7 +160,7 @@ build_aom_table <- function(object, pilot) {
     "\\toprule",
     "& & & \\multicolumn{4}{c}{All inequalities (LF)} & \\multicolumn{4}{c}{GMS refinement} \\\\",
     "\\cmidrule(lr){4-7} \\cmidrule(lr){8-11}",
-    "$\\{|S|:S\\in\\mathcal D\\}$ & $n$ & $\\mathfrak c_\\succ$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ \\\\",
+    "$\\{|S|:S\\in\\mathcal D\\}$ & $N_S$ & $\\mathfrak c_\\succ$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ \\\\",
     "\\midrule",
     rows,
     "\\bottomrule",
@@ -322,7 +322,7 @@ build_hlao_estimation_table <- function(object, pilot) {
     "\\toprule",
     "& & \\multicolumn{2}{c}{Reach probabilities} & \\multicolumn{2}{c}{Full-attention rule} \\\\",
     "\\cmidrule(lr){3-4} \\cmidrule(lr){5-6}",
-    "Design & $n$ & Bias & RMSE & Bias & RMSE \\\\",
+    "Design & $N_S$ & Bias & RMSE & Bias & RMSE \\\\",
     "\\midrule",
     rows,
     "\\bottomrule",
@@ -349,7 +349,7 @@ interval_panel <- function(object, configs, estimand_type,
                            groups = c("Hoeffding", "Gaussian")) {
   rows <- character(0L)
   for (config in configs) {
-    for (sample_size in c(100L, 500L)) {
+    for (sample_size in c(50L, 100L, 200L, 500L)) {
       design <- paste0("HLAO-", config, "-N", sprintf("%03d", sample_size))
       data <- result_data(object, design)
       summaries <- lapply(groups, function(group) {
@@ -369,7 +369,7 @@ interval_panel <- function(object, configs, estimand_type,
         " \\\\"
       ))
     }
-    rows <- c(rows, "\\addlinespace[2pt]")
+    rows <- c(rows, "\\cdashline{1-8}")
   }
   rows[-length(rows)]
 }
@@ -377,7 +377,7 @@ interval_panel <- function(object, configs, estimand_type,
 build_hlao_inference_table <- function(object, pilot) {
   pairwise <- interval_panel(
     object,
-    sprintf("H%02d", 1:10),
+    sprintf("H%02d", c(1:6, 8:10)),
     "pairwise-share",
     groups = c("Hoeffding", "Gaussian", "Studentized")
   )
@@ -386,17 +386,20 @@ build_hlao_inference_table <- function(object, pilot) {
     "\\centering",
     "\\caption{H-LAO pairwise confidence sets}",
     "\\label{tab:simulation-hlao-inference}",
+    "\\begingroup",
+    "\\renewcommand{\\arraystretch}{0.90}",
     "\\resizebox{\\textwidth}{!}{%",
     "\\begin{tabular}{lrrrrrrr}",
     "\\toprule",
     "& & \\multicolumn{2}{c}{Hoeffding projection} & \\multicolumn{2}{c}{Gaussian projection} & \\multicolumn{2}{c}{Studentized moment} \\\\",
     "\\cmidrule(lr){3-4} \\cmidrule(lr){5-6} \\cmidrule(lr){7-8}",
-    "Design & $n$ & Coverage & Width & Coverage & Width & Coverage & Width \\\\",
+    "Design & $N_S$ & Coverage & Width & Coverage & Width & Coverage & Width \\\\",
     "\\midrule",
     pairwise,
     "\\bottomrule",
     "\\end{tabular}",
     "}",
+    "\\endgroup",
     "\\begin{minipage}{0.91\\textwidth}",
     "\\footnotesize Notes: Coverage and average width are averaged over replications and valid pairwise targets. H07 is omitted because pairwise point identification requires preference--stopping independence. The studentized procedure inverts the undivided moment with Bonferroni calibration; width is the total length when the confidence set is disconnected. At an exactly degenerate moment it reports $[0,1]$.",
     "\\end{minipage}",
@@ -459,7 +462,7 @@ build_hlao_sensitivity_table <- function(object, pilot) {
     "\\toprule",
     "& & \\multicolumn{3}{c}{Population identified-set width} & \\multicolumn{2}{c}{Dependence robust} & \\multicolumn{2}{c}{No SPI} \\\\",
     "\\cmidrule(lr){3-5} \\cmidrule(lr){6-7} \\cmidrule(lr){8-9}",
-    "Design & $n$ & Independent & Dependent & No SPI & Coverage & Width & Coverage & Width \\\\",
+    "Design & $N_S$ & Independent & Dependent & No SPI & Coverage & Width & Coverage & Width \\\\",
     "\\midrule",
     rows,
     "\\bottomrule",
@@ -527,7 +530,7 @@ build_hlao_diagnostic_table <- function(object, pilot) {
     "\\label{tab:simulation-hlao-diagnostics}",
     "\\begin{tabular}{lrrrrr}",
     "\\toprule",
-    "Design & $n$ & Violation & Hoeffding outer & Gaussian outer & Direct delta \\\\",
+    "Design & $N_S$ & Violation & Hoeffding outer & Gaussian outer & Direct delta \\\\",
     "\\midrule",
     rows,
     "\\bottomrule",
