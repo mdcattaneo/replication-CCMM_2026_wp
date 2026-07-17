@@ -72,6 +72,17 @@ Rscript simuls/CCMM_2026_wp--computation.R
 Rscript simuls/CCMM_2026_wp--computation-tables.R
 ```
 
+The Supplemental Appendix's deterministic incomplete-menu H-LAO example has
+its own replication entry point:
+
+```text
+Rscript simuls/CCMM_2026_wp--incomplete-menu-example.R
+```
+
+This script constructs the reported suffix-closed menu domain and verifies the
+choice probabilities, sharp benchmark and dependence-robust bounds, and the
+column-generation endpoints reported for the example.
+
 The first command evaluates deterministic, model-compatible population choice
 systems and saves solver dimensions, certificates, and elapsed times in
 `simuls/output/`. The second command reads that saved object and renders the
