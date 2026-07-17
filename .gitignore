@@ -8,6 +8,7 @@
 /simuls/output/
 /simuls/tables/
 /simuls/figures/
+/simuls/*.tar.gz
 
 # Restricted empirical data and generated artifacts
 /empapp/data/

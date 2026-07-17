@@ -93,17 +93,18 @@ method_group <- function(method) {
   )
 }
 
-build_aom_table <- function(object, pilot, method, filename, caption, label,
-                            notes) {
+build_aom_table <- function(object, pilot) {
   data <- result_data(object)
-  data <- data[data$method == method, , drop = FALSE]
-  if (!nrow(data)) {
-    message <- paste0("No homogeneous-AOM results for method ", method, ".")
-    if (pilot) {
-      warning(message, call. = FALSE)
-      return(invisible(NULL))
-    }
-    stop(message, call. = FALSE)
+  methods <- c("LF", "GMS")
+  missing_methods <- setdiff(methods, unique(data$method))
+  if (length(missing_methods)) {
+    message <- paste0(
+      "No homogeneous-AOM results for method(s): ",
+      paste(missing_methods, collapse = ", "),
+      "."
+    )
+    if (pilot) warning(message, call. = FALSE) else stop(message, call. = FALSE)
+    return(invisible(NULL))
   }
   support_order <- c(
     "sizes-2-to-6", "sizes-3-to-6", "sizes-4-to-6", "sizes-5-to-6",
@@ -122,16 +123,19 @@ build_aom_table <- function(object, pilot, method, filename, caption, label,
       ]
       if (!nrow(selected)) next
       preferences <- sort(unique(selected$preference_id))
-      rejection <- vapply(preferences, function(preference) {
-        mean_na(selected$reject[selected$preference_id == preference])
-      }, numeric(1L))
       null <- vapply(preferences, function(preference) {
         unique(selected$is_null[selected$preference_id == preference])[[1L]]
       }, logical(1L))
-      entries <- vapply(seq_along(rejection), function(index) {
-        value <- format_rate(rejection[[index]])
-        if (isTRUE(null[[index]])) paste0(value, "$^{\\dagger}$") else value
-      }, character(1L))
+      entries <- unlist(lapply(methods, function(method) {
+        method_data <- selected[selected$method == method, , drop = FALSE]
+        rejection <- vapply(preferences, function(preference) {
+          mean_na(method_data$reject[method_data$preference_id == preference])
+        }, numeric(1L))
+        vapply(seq_along(rejection), function(index) {
+          value <- format_rate(rejection[[index]])
+          if (isTRUE(null[[index]])) paste0(value, "$^{\\dagger}$") else value
+        }, character(1L))
+      }), use.names = FALSE)
       rows <- c(rows, paste0(
         paste(
           support_label[match(support, support_order)],
@@ -149,21 +153,131 @@ build_aom_table <- function(object, pilot, method, filename, caption, label,
   lines <- c(
     "\\begin{table}[t]",
     "\\centering",
-    paste0("\\caption{", caption, "}"),
-    paste0("\\label{", label, "}"),
-    "\\begin{tabular}{lrrcccc}",
+    "\\caption{Finite-sample size and power for homogeneous AOM}",
+    "\\label{tab:simulation-aom-generated}",
+    "\\resizebox{\\textwidth}{!}{%",
+    "\\begin{tabular}{lrrcccccccc}",
     "\\toprule",
-    "Menu sizes & $n$ & Inequalities & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ \\\\",
+    "& & & \\multicolumn{4}{c}{All inequalities (LF)} & \\multicolumn{4}{c}{GMS refinement} \\\\",
+    "\\cmidrule(lr){4-7} \\cmidrule(lr){8-11}",
+    "$\\{|S|:S\\in\\mathcal D\\}$ & $n$ & $\\mathfrak c_\\succ$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ & $\\succ_1$ & $\\succ_2$ & $\\succ_3$ & $\\succ_4$ \\\\",
     "\\midrule",
     rows,
     "\\bottomrule",
     "\\end{tabular}",
+    "}%",
+    "\\par",
     "\\begin{minipage}{0.94\\textwidth}",
-    paste0("\\footnotesize Notes: ", notes, " A dagger marks a preference ordering that satisfies the population inequalities. Each menu in the indicated support has the reported sample size."),
+    paste(
+      "\\footnotesize Notes: Entries are Monte Carlo rejection probabilities",
+      "at the five-percent level based on 2,000 replications and 2,000",
+      "critical-value draws. LF is the all-inequalities feasible Gaussian",
+      "test corresponding to Theorem 9; GMS is the Andrews--Soares",
+      "refinement with \\texttt{MNRatioGMS}$=1/\\log(N)$. A dagger marks a",
+      "preference ordering that satisfies the population inequalities on the",
+      "indicated menu support. Daggered entries measure size; the remaining",
+      "entries measure power against fixed alternatives. The quantity",
+      "$\\mathfrak c_\\succ$ is the number of $\\succ$-Regularity inequalities.",
+      "All menus of the listed sizes are observed. The four rankings are",
+      "defined in the text. Each observed menu has the",
+      "reported sample size."
+    ),
     "\\end{minipage}",
     "\\end{table}"
   )
-  write_latex(lines, filename, pilot)
+  write_latex(lines, "CCMM_2026_wp--table-aom.tex", pilot)
+}
+
+build_aom_runtime_table <- function(object, pilot) {
+  data <- result_data(object)
+  required <- c("runtime_scope", "compute_node", "elapsed_seconds")
+  if (!all(required %in% names(data))) {
+    message(
+      "Skipping homogeneous-AOM runtime table: rerun the v5 simulation schema."
+    )
+    return(invisible(NULL))
+  }
+
+  methods <- c("LF", "GMS")
+  sample_size <- max(data$n_per_menu)
+  critical_draws <- unique(data$n_critical_draws)
+  if (length(critical_draws) != 1L) {
+    stop("Homogeneous-AOM runtime results use inconsistent draw counts.", call. = FALSE)
+  }
+  critical_draws <- format(
+    critical_draws,
+    big.mark = ",",
+    scientific = FALSE,
+    trim = TRUE
+  )
+  support_order <- c(
+    "sizes-2-to-6", "sizes-3-to-6", "sizes-4-to-6", "sizes-5-to-6",
+    "sizes-2-3-4-6", "sizes-2-3-6", "sizes-2-6"
+  )
+  support_label <- c(
+    "2--6", "3--6", "4--6", "5--6", "2, 3, 4, 6", "2, 3, 6", "2, 6"
+  )
+  rows <- character(0L)
+
+  for (support in support_order) {
+    selected <- data[
+      data$menu_support == support & data$n_per_menu == sample_size,
+      ,
+      drop = FALSE
+    ]
+    if (!nrow(selected)) next
+    runtimes <- vapply(methods, function(method) {
+      method_data <- selected[selected$method == method, , drop = FALSE]
+      method_data <- method_data[
+        !duplicated(method_data$replication),
+        ,
+        drop = FALSE
+      ]
+      mean_na(method_data$elapsed_seconds)
+    }, numeric(1L))
+    rows <- c(rows, paste0(
+      paste(
+        support_label[match(support, support_order)],
+        unique(selected$n_inequalities)[[1L]],
+        format_number(runtimes[["LF"]], 2L),
+        format_number(runtimes[["GMS"]], 2L),
+        sep = " & "
+      ),
+      " \\\\"
+    ))
+  }
+
+  lines <- c(
+    "\\begin{table}[t]",
+    "\\centering",
+    paste0(
+      "\\caption{Average homogeneous-AOM execution time at $N_S=",
+      sample_size,
+      "$}"
+    ),
+    "\\label{tab:simulation-aom-runtime}",
+    "\\begin{tabular}{lrrr}",
+    "\\toprule",
+    "$\\{|S|:S\\in\\mathcal D\\}$ & $\\mathfrak c_\\succ$ & LF & GMS \\\\",
+    "\\midrule",
+    rows,
+    "\\bottomrule",
+    "\\end{tabular}",
+    "\\begin{minipage}{0.80\\textwidth}",
+    paste(
+      "\\footnotesize Notes: Entries are average wall-clock seconds per",
+      "Monte Carlo replication. Each method is run end to end and jointly",
+      "tests the four reported rankings using the same simulated sample and",
+      "common Gaussian draws. A call includes data processing, construction",
+      "and evaluation of the restrictions, and", critical_draws,
+      "critical-value draws. LF and GMS are run consecutively on the same",
+      "compute node within",
+      "each replication; absolute times remain machine dependent."
+    ),
+    "\\end{minipage}",
+    "\\end{table}"
+  )
+  write_latex(lines, "CCMM_2026_wp--table-aom-runtime.tex", pilot)
 }
 
 estimation_summary <- function(data, estimand_type) {
@@ -431,33 +545,8 @@ main <- function() {
   aom <- read_block("homogeneous-aom", options$pilot)
   hlao <- read_block("hlao", options$pilot)
   diagnostic <- read_block("hlao-diagnostic", options$pilot)
-  build_aom_table(
-    aom,
-    options$pilot,
-    method = "LF",
-    filename = "CCMM_2026_wp--table-aom.tex",
-    caption = "Finite-sample rejection probabilities: homogeneous AOM, all inequalities",
-    label = "tab:simulation-aom-generated",
-    notes = paste(
-      "Entries are Monte Carlo rejection probabilities at the five-percent",
-      "level for the all-inequalities feasible Gaussian test corresponding",
-      "to Theorem 9."
-    )
-  )
-  build_aom_table(
-    aom,
-    options$pilot,
-    method = "GMS",
-    filename = "CCMM_2026_wp--table-aom-gms.tex",
-    caption = "Finite-sample rejection probabilities: homogeneous AOM, GMS refinement",
-    label = "tab:simulation-aom-gms-generated",
-    notes = paste(
-      "Entries are Monte Carlo rejection probabilities at the five-percent",
-      "level for the Andrews--Soares GMS refinement. The implementation sets",
-      "\\texttt{MNRatioGMS}=1/\\log(N), so the recentering factor is",
-      "$1/\\sqrt{\\log(N)}$."
-    )
-  )
+  build_aom_table(aom, options$pilot)
+  build_aom_runtime_table(aom, options$pilot)
   build_hlao_estimation_table(hlao, options$pilot)
   build_hlao_inference_table(hlao, options$pilot)
   build_hlao_sensitivity_table(hlao, options$pilot)

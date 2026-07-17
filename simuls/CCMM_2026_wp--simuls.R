@@ -20,11 +20,12 @@ output_dir <- file.path(project_root, "output")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 master_seed <- 20260713L
-simulation_schema_version <- "2026-07-15-v4"
+simulation_schema_version <- "2026-07-17-v5"
 production_replications <- 2000L
 critical_value_draws <- 2000L
 pilot_replications <- 25L
 pilot_critical_value_draws <- 200L
+aom_methods <- c("LF", "GMS")
 
 aom_preferences <- matrix(
   c(
@@ -303,6 +304,11 @@ replication_seed <- function(seed, design_index, replication) {
   as.integer(candidate %% .Machine$integer.max)
 }
 
+critical_value_seed <- function(seed_replication) {
+  candidate <- as.double(seed_replication) + 500000000
+  as.integer(candidate %% .Machine$integer.max)
+}
+
 design_seed_index <- function(row, fallback) {
   if ("simulation_index" %in% names(row)) {
     return(as.integer(row$simulation_index[[1L]]))
@@ -337,48 +343,58 @@ run_aom_simulations <- function(design, n_rep, n_crit, seed) {
       seed_replication <- replication_seed(seed, seed_index, replication)
       set.seed(seed_replication)
       sample <- simulate_aom_sample(row$n_per_menu, menu_sizes)
-      fit <- ramchoice::aomTest(
-        sample$menu,
-        sample$choice,
-        pref_list = aom_preferences,
-        method = "ALL",
-        alpha = 0.05,
-        nCritSimu = n_crit
-      )
+      seed_critical <- critical_value_seed(seed_replication)
 
-      inference <- fit$results
-      truth_index <- match(
-        inference$preference_id,
-        population_results$preference_id
-      )
+      method_results <- lapply(aom_methods, function(aom_method) {
+        set.seed(seed_critical)
+        fit <- ramchoice::aomTest(
+          sample$menu,
+          sample$choice,
+          pref_list = aom_preferences,
+          method = aom_method,
+          alpha = 0.05,
+          nCritSimu = n_crit
+        )
+
+        inference <- fit$results
+        truth_index <- match(
+          inference$preference_id,
+          population_results$preference_id
+        )
+        data.frame(
+          design_id = row$design_id,
+          block = row$block,
+          replication = replication,
+          replication_seed = seed_replication,
+          critical_value_seed = seed_critical,
+          universe_size = row$universe_size,
+          n_per_menu = row$n_per_menu,
+          menu_support = row$menu_support,
+          preference_id = inference$preference_id,
+          preference = inference$preference,
+          is_null = population_results$compatible[truth_index],
+          population_n_violated = population_results$n_violated[truth_index],
+          population_max_inequality = population_results$max_inequality[truth_index],
+          population_max_violation = population_results$max_violation[truth_index],
+          method = inference$method,
+          alpha = inference$alpha,
+          n_critical_draws = n_crit,
+          statistic = inference$statistic,
+          critical_value = inference$critical_value,
+          p_value = inference$p_value,
+          reject = inference$reject,
+          n_inequalities = inference$n_inequalities,
+          n_positive_sample_inequalities = inference$n_positive_sample_inequalities,
+          max_sample_inequality = inference$max_sample_inequality,
+          elapsed_seconds = fit$elapsed,
+          runtime_scope = "end-to-end method call for four rankings",
+          compute_node = unname(Sys.info()[["nodename"]]),
+          stringsAsFactors = FALSE
+        )
+      })
+
       result_index <- result_index + 1L
-      result[[result_index]] <- data.frame(
-        design_id = row$design_id,
-        block = row$block,
-        replication = replication,
-        replication_seed = seed_replication,
-        universe_size = row$universe_size,
-        n_per_menu = row$n_per_menu,
-        menu_support = row$menu_support,
-        preference_id = inference$preference_id,
-        preference = inference$preference,
-        is_null = population_results$compatible[truth_index],
-        population_n_violated = population_results$n_violated[truth_index],
-        population_max_inequality = population_results$max_inequality[truth_index],
-        population_max_violation = population_results$max_violation[truth_index],
-        method = inference$method,
-        alpha = inference$alpha,
-        n_critical_draws = n_crit,
-        statistic = inference$statistic,
-        critical_value = inference$critical_value,
-        p_value = inference$p_value,
-        reject = inference$reject,
-        n_inequalities = inference$n_inequalities,
-        n_positive_sample_inequalities = inference$n_positive_sample_inequalities,
-        max_sample_inequality = inference$max_sample_inequality,
-        elapsed_seconds = fit$elapsed,
-        stringsAsFactors = FALSE
-      )
+      result[[result_index]] <- do.call(rbind, method_results)
     }
 
     message(

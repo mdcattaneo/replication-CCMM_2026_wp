@@ -31,6 +31,12 @@ scripts read only those saved results and write paper-ready artifacts to
 `simuls/tables/` and `simuls/figures/`. Generated artifacts and raw output are
 local by default.
 
+The homogeneous-AOM block runs the reported LF and GMS procedures separately
+on each simulated sample. It resets a common critical-value seed before each
+call and records end-to-end elapsed time, the compute node, and the timing
+scope. The table renderer uses these fields to report average method-specific
+execution time at the largest menu sample size.
+
 To inspect the complete Monte Carlo design without running it:
 
 ```text
@@ -56,6 +62,23 @@ The folders [`simuls/legacy/AOM/`](simuls/legacy/AOM/) and
 [`simuls/legacy/HAOM/`](simuls/legacy/HAOM/) contain the earlier simulation
 code and outputs. They are retained as numerical and design baselines for the
 2026 pipeline.
+
+### Computational benchmarks
+
+General scalability benchmarks are separate from the Monte Carlo workflow:
+
+```text
+Rscript simuls/CCMM_2026_wp--computation.R
+Rscript simuls/CCMM_2026_wp--computation-tables.R
+```
+
+The first command evaluates deterministic, model-compatible population choice
+systems and saves solver dimensions, certificates, and elapsed times in
+`simuls/output/`. The second command reads that saved object and renders the
+homogeneous-AOM mixed-integer and H-LAO enumeration/column-generation tables.
+Use `--pilot` with both commands for a quick interface check. These benchmarks
+measure implementation costs independently of the data-generating processes
+used in the Monte Carlo experiments.
 
 ## Empirical Application
 
